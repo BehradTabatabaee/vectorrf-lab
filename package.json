@@ -1,0 +1,11 @@
+{
+  "name": "vectorrf-lab-ui-tests",
+  "private": true,
+  "description": "Optional Node Playwright harness for VectorRF Lab live-server UI smoke testing",
+  "scripts": {
+    "test:ui:live": "node tests/ui/live_smoke.cjs"
+  },
+  "devDependencies": {
+    "playwright": ">=1.48.0 <2"
+  }
+}

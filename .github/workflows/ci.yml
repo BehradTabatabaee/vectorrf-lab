@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install
+        run: python -m pip install -e '.[dev]'
+      - name: Test
+        run: python -m pytest
+
+  package:
+    name: Build and wheel smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Build
+        run: |
+          python -m pip install build
+          python -m build
+      - name: Install wheel
+        run: python -m pip install dist/*.whl
+      - name: Verify packaged app and static assets
+        working-directory: /tmp
+        run: |
+          python - <<'PY'
+          from fastapi.testclient import TestClient
+          from vectorrf.app import app
+
+          client = TestClient(app)
+          for path in ('/', '/help', '/assets/app.js', '/api/health', '/api/catalog'):
+              response = client.get(path)
+              assert response.status_code == 200, (path, response.status_code, response.text[:200])
+          assert client.get('/api/health').json()['version'] == '1.2.0'
+          print('wheel smoke test passed')
+          PY
+
+  ui-smoke:
+    name: Browser smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install application and Playwright
+        run: python -m pip install -e '.[ui-test]'
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Run deterministic UI smoke test
+        run: python tests/ui/ui_smoke.py

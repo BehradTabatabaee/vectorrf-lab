@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VectorRF Lab</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <div id="app" class="app">
+    <header class="menubar">
+      <div class="app-title">VectorRF Lab <span>DSP / RF Workbench</span></div>
+      <div class="engine-state"><i id="engineLed"></i><span id="engineText">connecting</span></div>
+      <a class="help-link" href="/help" target="_blank" rel="noopener">Help</a>
+    </header>
+    <nav id="workspaceTabs" class="workspace-tabs"></nav>
+    <div id="workspace" class="workspace"></div>
+    <footer class="statusbar">
+      <span id="statusSource">SOURCE —</span>
+      <span id="statusFs">FS —</span>
+      <span id="statusRate">UPDATE —</span>
+      <span class="status-spacer"></span>
+      <span id="statusMessage">READY</span>
+    </footer>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script src="/assets/app.js"></script>
+  <script src="/assets/studio.js"></script>
+  <script src="/assets/workbench.js"></script>
+</body>
+</html>

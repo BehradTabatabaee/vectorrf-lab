@@ -1,0 +1,42 @@
+name: Bug report
+description: Report a reproducible defect in VectorRF Lab
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Please do not include sensitive security details here; use SECURITY.md for vulnerability reporting."
+  - type: input
+    id: version
+    attributes:
+      label: VectorRF Lab version
+      placeholder: "1.2.0"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, browser if relevant
+      placeholder: "Ubuntu 24.04, Python 3.12, Chromium ..."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Include the smallest signal/receiver/radar configuration that reproduces the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true

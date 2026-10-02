@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VectorRF Lab 1.2 Help</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body class="help-body">
+  <header class="help-topbar">
+    <div><strong>VectorRF Lab 1.2</strong><span>Product help</span></div>
+    <a class="help-link" href="/">Back to lab</a>
+  </header>
+  <main class="help-shell">
+    <aside class="help-nav" aria-label="Help topics">
+      <a href="#quick-start">Quick start</a>
+      <a href="#spectrum">Spectrum analyzer</a>
+      <a href="#zero-span">Zero span</a>
+      <a href="#power">Absolute dBm power</a>
+      <a href="#frames">TX/RX framing</a>
+      <a href="#receiver">Receiver</a>
+      <a href="#quality">Modulation quality</a>
+      <a href="#classifier">Classifier</a>
+      <a href="#radar">Radar Studio</a>
+      <a href="#performance">Performance</a>
+      <a href="#validation">Limits & validation</a>
+      <a href="#troubleshooting">Troubleshooting</a>
+    </aside>
+    <article class="help-content">
+      <section id="quick-start">
+        <p class="help-kicker">USER GUIDE</p>
+        <h1>VectorRF Lab</h1>
+        <p>VectorRF Lab is a local, browser-based baseband DSP laboratory. The transmitter, spectrum analyzer, receiver, frame tools, classifier and radar workspace operate on simulated complex samples rather than a hardware RF front end.</p>
+        <div class="help-callout"><strong>Fast path:</strong> choose a waveform in <b>Transmitter</b>, set sample rate and power, then open <b>Spectrum</b> or <b>Receiver</b>. Most edits apply when a field loses focus or you press Enter.</div>
+        <h2>What the status bar means</h2>
+        <p><b>SOURCE</b> identifies the active simulation path, <b>FS</b> is the current sample rate, <b>UPDATE</b> is the observed browser display rate, and the right side reports current state or validation errors. A display rate below its target means the requested experiment is taking longer than one frame budget.</p>
+      </section>
+
+      <section id="spectrum">
+        <h2>Spectrum analyzer</h2>
+        <p>The communications spectrum is always centered at baseband DC; there is no analyzer center-frequency control. <b>Baseband span</b> controls the horizontal display span and is limited to 10 MHz.</p>
+        <p>The requested span and the source sample rate are intentionally separate. A 10 MHz display span always shows approximately −5 MHz to +5 MHz. If the source is only 1 MS/s, valid sampled spectrum exists only inside approximately −500 kHz to +500 kHz; the remainder is marked <b>OUTSIDE SOURCE NYQUIST</b>. Increase transmitter sample rate when you need real spectrum data across the wider span.</p>
+        <h3>Resolution and speed</h3>
+        <p>Requested RBW, FFT window and averaging determine FFT cost. Narrow RBW at a high sample rate requires a larger transform. The live path limits display points while preserving bucket peaks so a wide 10 MHz view does not need to draw every FFT bin.</p>
+        <h3>Markers and zoom</h3>
+        <p>Up to eight markers can be active. Use peak, next-peak, DC, delta-to-M1 and DC↔peak actions for common measurements. Mouse-wheel zoom is centered on the pointer; the pan controls move the view without retuning acquisition. Double-click restores the full requested span. Markers remain constrained to sampled data, so they cannot report a fabricated value outside source Nyquist.</p>
+        <h3>Trace memory</h3>
+        <p>Trace 1 is the live write trace by default. Additional max/min/average traces are off until enabled to keep the default rendering path fast. Capture memory stores frequency coordinates together with trace values, allowing comparisons after later configuration changes.</p>
+      </section>
+
+      <section id="zero-span">
+        <h2>Zero span</h2>
+        <p>Zero span plots time-domain I/Q, envelope, unwrapped phase and instantaneous frequency from one interval of the current source. Frequency is calculated from adjacent complex samples before display reduction, and phase/frequency values around signal nulls are masked because they are undefined there.</p>
+        <p>The live zero-span view is intentionally bounded to a display-sized point set and refreshes independently from the spectrum FFT stream. Use <b>Hold capture</b> when inspecting a transient. Shorter measurement lengths reduce both compute and browser drawing work.</p>
+      </section>
+
+      <section id="power">
+        <h2>Absolute transmitter power</h2>
+        <p><b>Transmit power (dBm)</b> is an absolute simulator calibration and has no artificial UI min/max limit. A coherent bin-centered complex tone reads its configured dBm value at the spectrum peak. Modulated signals have the same configured average total power distributed over their occupied bins, so no single spectral bin is expected to equal total transmit power.</p>
+        <p>This is a simulation calibration, not a hardware output-power claim. It does not model DAC full scale, analog gain compression, antenna gain, cable loss or regulatory transmit limits unless a separate experiment explicitly introduces those effects.</p>
+      </section>
+
+      <section id="frames">
+        <h2>Generic TX and RX frames</h2>
+        <p>The transmitter frame builder can assemble ordered digital blocks with independent modulation, bit count or pattern, symbol rate, relative power and repetition. Supported frame blocks include PSK/QAM/APSK, FSK/MSK/GMSK and OFDM families. Blocks repeat as a complete frame to fill the capture.</p>
+        <p>The receiver framing view uses an expected block plan. It can perform calibrated energy detection, normalized preamble correlation, frame-start selection and per-block decoding. <b>Follow transmitter</b> is useful for loopback experiments; editing the receiver frame plan independently disables that linkage.</p>
+        <div class="help-callout"><strong>Typical lab frame:</strong> BPSK preamble → OFDM header → QPSK payload. Use the preamble for correlation, then inspect each decoded block separately.</div>
+      </section>
+
+      <section id="receiver">
+        <h2>Receiver</h2>
+        <p><b>Live monitor</b> shows the actual processed samples without requiring a demodulation assumption. <b>Demodulation</b> adds format-specific recovery. The editable processing chain can insert gain, tuning, filtering, resampling, DC removal, AGC, expressions, synchronization blocks and supported Python extensions.</p>
+        <p>Channel controls add deterministic SNR, carrier/phase/timing offsets, I/Q imbalance, DC and echo effects. For repeatable experiments, capture identity and source seed are carried through the processing path.</p>
+      </section>
+
+      <section id="quality">
+        <h2>Modulation quality</h2>
+        <p>Linear digital and OFDM formats use decision-directed EVM/MER where meaningful. Basic, analog, FSK/MSK and mixed-frame signals instead show direct waveform quality: I/Q trajectory, envelope, phase and instantaneous frequency. The application does not invent an EVM number for a signal type where that metric is not defined.</p>
+      </section>
+
+      <section id="classifier">
+        <h2>Classifier</h2>
+        <p>The classifier is a blind heuristic observer. Its score indicates agreement with internal rules, not a calibrated probability. CFO, low SNR, burst behavior, mixed frames and uncommon formats can reduce confidence or make different hypotheses look similar.</p>
+      </section>
+
+      <section id="radar">
+        <h2>Radar Studio</h2>
+        <p>Radar Studio is a separate simulation workspace with waveform design, targets, arrays, propagation and processing. It supports arbitrary-waveform delay/Doppler correlation plus structured pulsed and FMCW processing. Truth values and measured estimates are shown separately.</p>
+        <p>Keep designed baseband content below half the configured sample rate to avoid aliasing. Coherent processing requires enough complete intervals for the requested algorithm; timing controls should match the waveform being simulated.</p>
+      </section>
+
+      <section id="performance">
+        <h2>Performance guide</h2>
+        <p>VectorRF Lab uses bounded binary spectrum payloads, backpressure, cached source records, display decimation and request coalescing. The fastest configuration is normally one live trace, moderate averaging and an RBW that does not force an unnecessarily large FFT.</p>
+        <table class="help-table">
+          <thead><tr><th>Symptom</th><th>First adjustment</th></tr></thead>
+          <tbody>
+            <tr><td>10 MHz spectrum updates slowly</td><td>Raise RBW, reduce FFT averaging, keep extra traces off, or lower live update target.</td></tr>
+            <tr><td>Zero span feels heavy</td><td>Shorten measurement length; hold the capture while examining details.</td></tr>
+            <tr><td>Receiver display falls behind</td><td>Shorten capture duration or simplify the processing chain.</td></tr>
+            <tr><td>Radar cannot reach target FPS</td><td>Reduce samples/capture, search size, array size or coherent processing load.</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="validation">
+        <h2>Limits and validation</h2>
+        <p>Invalid edits retain the last successful live result. The spectrum span field clamps typed values to the supported 100 Hz…10 MHz range, so entering 50,000,000 becomes 10,000,000 rather than killing the stream. Direct API clients still receive validation errors for unsupported values.</p>
+        <p>The transmitter sample rate is currently limited to 10 MS/s. Spectrum content above ±Fs/2 is not available from that sampled source. Numeric controls allow arbitrary valid typed values; arrow buttons are only convenience increments.</p>
+      </section>
+
+      <section id="troubleshooting">
+        <h2>Troubleshooting</h2>
+        <h3>The spectrum axis is wide but the trace only occupies the middle</h3>
+        <p>The requested span is wider than the transmitter sample rate. This is expected and is explicitly shaded. Increase sample rate if you need sampled content across the full span.</p>
+        <h3>A PSK/QAM spectrum appears to jump</h3>
+        <p>Current releases avoid wrapping FFT windows across source-record boundaries. If you still see a change, check burst settings, noise, changing data, detector mode and peak/max-hold traces before treating it as a renderer problem.</p>
+        <h3>The browser says the backend is unavailable</h3>
+        <p>Keep the launch terminal open and verify the local server is listening on the configured port. The default address is <code>http://127.0.0.1:8765</code>. Set <code>VECTORRF_PORT</code> before launch to choose another port.</p>
+        <h3>How do I verify a release?</h3>
+        <p>From the project directory run <code>python -m pytest</code>. The release archive also includes browser smoke tests and release notes. Installed packages can be launched with <code>vectorrf-lab</code>.</p>
+      </section>
+    </article>
+  </main>
+</body>
+</html>

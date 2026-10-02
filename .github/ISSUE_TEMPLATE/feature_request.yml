@@ -1,0 +1,24 @@
+name: Feature request
+description: Propose a new RF/DSP, radar, UI, or developer feature
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What experiment or workflow is currently difficult or impossible?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the user-visible behavior and, for DSP features, the intended model/assumptions.
+    validations:
+      required: true
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation ideas
+      description: References, expected numerical behavior, or tests that could validate the implementation.
