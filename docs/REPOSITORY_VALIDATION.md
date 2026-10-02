@@ -29,6 +29,8 @@ A wheel was built from the cleaned source tree and installed into an isolated ta
 
 The installed package reported version `1.2.0`.
 
+The GitHub wheel smoke test starts the installed package with Uvicorn and probes it over localhost using Python's standard library. It intentionally avoids importing FastAPI/Starlette's test-only `TestClient`, so the production-wheel check does not depend on optional HTTP client packages. The development extra includes both `httpx` and `httpx2` so the regression suite remains compatible across the supported Starlette transition.
+
 ## What changed structurally
 
 - Tests moved from `backend/tests/` and `web/tests/` into top-level `tests/` and `tests/ui/`.

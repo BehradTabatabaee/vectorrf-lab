@@ -19,6 +19,25 @@ The project is intended for learning, prototyping, algorithm experiments, and RF
 - Installable CLI plus one-command start scripts for Windows and Linux/macOS.
 - MIT licensed.
 
+## Interface tour
+
+A few of the major workspaces and feature views:
+
+<table>
+  <tr>
+    <td width="50%"><strong>Receiver · live monitor</strong><br><img src="docs/screenshots/receiver-monitor.png" alt="Receiver live monitor with I/Q, constellation, spectrum, and waterfall" width="100%"></td>
+    <td width="50%"><strong>Receiver · processing chain</strong><br><img src="docs/screenshots/receiver-processing.png" alt="Editable receiver DSP processing chain" width="100%"></td>
+  </tr>
+  <tr>
+    <td width="50%"><strong>Receiver · demodulation</strong><br><img src="docs/screenshots/receiver-demodulation.png" alt="Receiver demodulation workspace" width="100%"></td>
+    <td width="50%"><strong>OFDM · transmitter shaping</strong><br><img src="docs/screenshots/ofdm-shaping.png" alt="OFDM transmitter pulse shaping and filtering controls" width="100%"></td>
+  </tr>
+  <tr>
+    <td width="50%"><strong>OFDM · receiver tuning</strong><br><img src="docs/screenshots/ofdm-tuning.png" alt="OFDM receiver synchronization and tuning controls" width="100%"></td>
+    <td width="50%"><strong>Radar · waveform designer</strong><br><img src="docs/screenshots/radar-pulses.png" alt="Radar waveform designer" width="100%"></td>
+  </tr>
+</table>
+
 ## Quick start
 
 ### Windows

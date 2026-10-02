@@ -45,15 +45,51 @@ jobs:
         working-directory: /tmp
         run: |
           python - <<'PY'
-          from fastapi.testclient import TestClient
-          from vectorrf.app import app
+          import json
+          import socket
+          import subprocess
+          import sys
+          import time
+          from urllib.request import urlopen
 
-          client = TestClient(app)
-          for path in ('/', '/help', '/assets/app.js', '/api/health', '/api/catalog'):
-              response = client.get(path)
-              assert response.status_code == 200, (path, response.status_code, response.text[:200])
-          assert client.get('/api/health').json()['version'] == '1.2.0'
-          print('wheel smoke test passed')
+          port = 18765
+          base = f"http://127.0.0.1:{port}"
+          proc = subprocess.Popen(
+              [sys.executable, "-m", "uvicorn", "vectorrf.app:app", "--host", "127.0.0.1", "--port", str(port)],
+              stdout=subprocess.PIPE,
+              stderr=subprocess.STDOUT,
+              text=True,
+          )
+          try:
+              deadline = time.monotonic() + 15
+              while time.monotonic() < deadline:
+                  if proc.poll() is not None:
+                      output = proc.stdout.read() if proc.stdout else ""
+                      raise RuntimeError(f"packaged app exited early:\n{output}")
+                  try:
+                      with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                          break
+                  except OSError:
+                      time.sleep(0.1)
+              else:
+                  raise RuntimeError("packaged app did not start within 15 seconds")
+
+              for path in ("/", "/help", "/assets/app.js", "/assets/styles.css", "/api/health", "/api/catalog"):
+                  with urlopen(base + path, timeout=5) as response:
+                      body = response.read()
+                      assert response.status == 200, (path, response.status, body[:200])
+
+              with urlopen(base + "/api/health", timeout=5) as response:
+                  health = json.load(response)
+              assert health["version"] == "1.2.0", health
+              print("wheel smoke test passed")
+          finally:
+              proc.terminate()
+              try:
+                  proc.wait(timeout=5)
+              except subprocess.TimeoutExpired:
+                  proc.kill()
+                  proc.wait(timeout=5)
           PY
 
   ui-smoke:
