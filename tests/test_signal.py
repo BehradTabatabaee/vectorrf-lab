@@ -20,7 +20,10 @@ def test_all_waveforms_generate_finite_iq(waveform):
         chirp_stop_hz=30_000,
         pulse_width_s=40e-6,
         pri_s=200e-6,
+        tones_hz=[-80_000, 15_000, 45_000],
         snr_db=25 if waveform != WaveformKind.AWGN else None,
+        components=[{"waveform": "qpsk", "symbol_rate": 10_000}, {"waveform": "tone", "center_hz": 40_000}]
+        if waveform == WaveformKind.COMPOSITE else [],
     )
     g = generate(cfg)
     assert g.samples.dtype == np.complex64

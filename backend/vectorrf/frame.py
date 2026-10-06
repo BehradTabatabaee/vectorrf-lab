@@ -161,6 +161,13 @@ def synthesize_block(
 
 def synthesize_frame(cfg, n: int, rng: np.random.Generator, payload_provider) -> tuple[np.ndarray, np.ndarray, dict]:
     """Build and repeat a mixed-modulation frame to fill ``n`` samples."""
+    frame, bits, meta = frame_period(cfg, rng, payload_provider)
+    reps = int(math.ceil(n/len(frame)))
+    return np.tile(frame, reps)[:n].astype(np.complex64), bits, meta
+
+
+def frame_period(cfg, rng: np.random.Generator, payload_provider) -> tuple[np.ndarray, np.ndarray, dict]:
+    """One period of a mixed-modulation frame: its samples, bits and block layout."""
     segments: list[np.ndarray] = []
     meta: list[dict] = []
     all_bits: list[np.ndarray] = []
@@ -190,10 +197,8 @@ def synthesize_frame(cfg, n: int, rng: np.random.Generator, payload_provider) ->
     frame = np.concatenate(segments).astype(np.complex64)
     if not len(frame):
         raise ValueError("Frame contains no samples")
-    reps = int(math.ceil(n/len(frame)))
-    out = np.tile(frame, reps)[:n].astype(np.complex64)
     bits = np.concatenate(all_bits).astype(np.uint8) if all_bits else np.array([], dtype=np.uint8)
-    return out, bits, {"frame_mode":"blocks", "frame_samples":int(len(frame)), "frame_duration_s":float(len(frame)/cfg.sample_rate), "frame_blocks":meta}
+    return frame, bits, {"frame_mode":"blocks", "frame_samples":int(len(frame)), "frame_duration_s":float(len(frame)/cfg.sample_rate), "frame_blocks":meta}
 
 
 def frame_acquisition(samples: np.ndarray, cfg, *, power_dbm: float = 0.0, reference_rms: float = 1.0) -> dict:

@@ -1,18 +1,47 @@
 from __future__ import annotations
 
 from enum import Enum
+import os
 from typing import Literal
-from pydantic import BaseModel, Field, model_validator, ConfigDict
+from pydantic import BaseModel, Field, model_validator, ConfigDict, ValidationInfo
 
+from .agility import FrequencyAgility, frequency_extent
 from .ofdm import OFDMDesign
 from .programs import WaveProgram
+from .units import eng
 
-MAX_SAMPLE_RATE = 10_000_000.0
-MAX_SPECTRUM_SPAN = 10_000_000.0
+
+def _env_int(name: str, default: int, lo: int, hi: int) -> int:
+    try:
+        value = int(os.environ.get(name, default))
+    except ValueError:
+        value = default
+    return max(lo, min(hi, value))
+
+
+# Sample rate is a scale in a simulator: the engine bounds the number of
+# samples per capture, not the rate, so a capture simply spans less time at
+# higher rates.  5 GS/s covers RFSoC-class direct-sampling ADCs; every DSP path
+# is written in samples/symbols and validated with GS/s-rate tests.
+MAX_SAMPLE_RATE = 5_000_000_000.0
+MAX_SPECTRUM_SPAN = MAX_SAMPLE_RATE
+# Samples in one live/HTTP capture.  8 Mi complex samples = 64 MiB of complex64
+# (4.2 ms at 2 GS/s).  Raise with VECTORRF_MAX_CAPTURE_SAMPLES on large machines.
+MAX_CAPTURE_SAMPLES = _env_int("VECTORRF_MAX_CAPTURE_SAMPLES", 1 << 23, 1 << 16, 1 << 28)
+# Exports may render one longer contiguous record.
+MAX_EXPORT_SAMPLES = max(MAX_CAPTURE_SAMPLES, _env_int("VECTORRF_MAX_EXPORT_SAMPLES", 1 << 25, 1 << 16, 1 << 30))
 RECOMMENDED_LIVE_SAMPLE_RATE = 5_000_000.0
+# Signals in one composite transmitter (each is a complete transmitter design).
+MAX_COMPONENTS = 16
+# Pulse shaping and the receiver's polyphase decimator cost the same per sample at
+# any oversampling, so the bound only keeps filters a sensible size (50 kBd at 3.3 GS/s).
+MAX_SAMPLES_PER_SYMBOL = 65_536
 
 
 class WaveformKind(str, Enum):
+    # Sum of independently designed signals
+    COMPOSITE = "composite"
+
     # Fundamentals
     CUSTOM = "custom"
     TONE = "tone"
@@ -113,7 +142,9 @@ class TxConfig(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
     waveform: WaveformKind = WaveformKind.QPSK
     sample_rate: float = Field(default=1_000_000.0, gt=1_000.0, le=MAX_SAMPLE_RATE)
-    duration: float = Field(default=0.05, gt=1e-5, le=5.0)
+    # Capture length in seconds.  Its sample count (duration × rate) is bounded
+    # by MAX_CAPTURE_SAMPLES rather than by a fixed time limit.
+    duration: float = Field(default=0.05, gt=1e-9, le=600.0)
     # Legacy sample-unit controls are retained for API compatibility.  Absolute
     # transmit power is carried separately and calibrates instrument readouts.
     normalize_output: bool = True
@@ -122,6 +153,18 @@ class TxConfig(BaseModel):
     center_hz: float = 0.0
     snr_db: float | None = Field(default=None, ge=-30.0, le=100.0)
     seed: int = 7
+    # RF frequency that complex baseband 0 Hz represents (0 = plain baseband).
+    # It labels instrument axes and exports; every other frequency here is a
+    # baseband offset from it.
+    rf_center_hz: float = Field(default=0.0, ge=0.0, le=1e12)
+    # Hopping or sweeping applied to the finished signal (any waveform).
+    agility: FrequencyAgility = Field(default_factory=FrequencyAgility)
+    # Composite waveform: the sum of complete component designs.  Components
+    # share this sample clock and capture length; each keeps its own absolute
+    # power, frequency offset, burst gating and agility.
+    components: list["TxConfig"] = Field(default_factory=list, max_length=MAX_COMPONENTS)
+    label: str = Field(default="", max_length=64)
+    enabled: bool = True
 
     # Message / digital modulation
     data_source: Literal["text", "pn", "bits"] = "text"
@@ -164,6 +207,8 @@ class TxConfig(BaseModel):
     tones_hz: list[float] = Field(default_factory=lambda: [-80_000.0, 45_000.0, 130_000.0])
     chirp_start_hz: float = -100_000.0
     chirp_stop_hz: float = 100_000.0
+    # Sweep period of the (sawtooth) chirp; None = the capture length.
+    chirp_period_s: float | None = Field(default=None, gt=1e-9, le=600.0)
 
     program: WaveProgram = Field(default_factory=WaveProgram)
     ofdm_design: OFDMDesign = Field(default_factory=OFDMDesign)
@@ -204,8 +249,20 @@ class TxConfig(BaseModel):
     arbitrary_amplitude: list[float] = Field(default_factory=lambda: [1.0, 0.0, 0.8, 0.0])
     arbitrary_phase_deg: list[float] = Field(default_factory=lambda: [0.0, 0.0, 180.0, 0.0])
 
+    @model_validator(mode="before")
+    @classmethod
+    def _share_clock(cls, data):
+        """Components always run on the parent's sample clock and capture length."""
+        if isinstance(data, dict) and data.get("components"):
+            shared = {key: data.get(key, cls.model_fields[key].default)
+                      for key in ("sample_rate", "duration", "rf_center_hz")}
+            components = [{**(c.model_dump() if isinstance(c, BaseModel) else dict(c)), **shared}
+                          for c in data["components"]]
+            data = {**data, "components": components}
+        return data
+
     @model_validator(mode="after")
-    def _validate(self):
+    def _validate(self, info: ValidationInfo):
         if self.frame_enabled:
             if self.frame_mode == "blocks" and not self.frame_blocks:
                 raise ValueError("Block frame mode requires at least one frame block")
@@ -213,8 +270,8 @@ class TxConfig(BaseModel):
                 rate = block.symbol_rate or self.symbol_rate
                 if rate >= self.sample_rate / 1.5:
                     raise ValueError(f"Frame block {block.name!r} symbol_rate must be comfortably below sample_rate")
-                if self.sample_rate / rate > 2048:
-                    raise ValueError(f"Frame block {block.name!r} supports at most 2048 samples per symbol")
+                if self.sample_rate / rate > MAX_SAMPLES_PER_SYMBOL:
+                    raise ValueError(f"Frame block {block.name!r} supports at most {MAX_SAMPLES_PER_SYMBOL:,} samples per symbol")
             if set(self.preamble_bits)-{'0','1'}:
                 raise ValueError("Preamble must contain 0 and 1 only")
             if self.frame_crc and self.payload_bits % 8:
@@ -225,18 +282,48 @@ class TxConfig(BaseModel):
             raise ValueError("custom_bits must contain only 0 and 1")
         if self.waveform == WaveformKind.APSK32 and self.apsk_ratio3 <= self.apsk_ratio2:
             raise ValueError("APSK outer radius must exceed the middle radius")
-        if self.sample_rate * self.duration > 2_000_000:
-            raise ValueError("Record exceeds 2 million samples; reduce duration or sample rate")
+        limit = int((info.context or {}).get("max_samples", MAX_CAPTURE_SAMPLES)) if info is not None else MAX_CAPTURE_SAMPLES
+        if round(self.sample_rate * self.duration) > limit:
+            raise ValueError(f"capture length {eng(self.duration, 's')} is {round(self.sample_rate * self.duration):,} samples at "
+                             f"{eng(self.sample_rate, 'S/s')}; a capture holds at most {limit:,} samples ({eng(limit / self.sample_rate, 's', 4)} at this rate)")
         nyq = self.sample_rate / 2.0
+        band = f"Nyquist: at {eng(self.sample_rate, 'S/s')} the sampled band is ±{eng(nyq)}"
         if abs(self.center_hz) >= nyq:
-            raise ValueError("center_hz must lie inside Nyquist")
+            raise ValueError(f"frequency offset {eng(self.center_hz)} is beyond {band}")
+        if self.waveform == WaveformKind.COMPOSITE:
+            if not self.components:
+                raise ValueError("A composite signal needs at least one component")
+            for c in self.components:
+                if c.waveform == WaveformKind.COMPOSITE or c.components:
+                    raise ValueError("Composite components cannot themselves be composite")
+            if not any(c.enabled for c in self.components):
+                raise ValueError("Enable at least one composite component")
+        if self.waveform == WaveformKind.MULTITONE:
+            outside = [f for f in self.tones_hz if abs(f) >= nyq]
+            if outside:
+                raise ValueError(f"tone {eng(outside[0])} is beyond {band}")
+        lo, hi = carrier_extent(self)
+        if beyond_nyquist(self):
+            def reach(a, b):
+                return eng(a) if a == b else f"{eng(a)} … {eng(b)}"
+            culprits = []
+            if self.waveform == WaveformKind.COMPOSITE:
+                shift = frequency_extent(self.agility)
+                for i, c in enumerate(self.components):
+                    a, b = carrier_extent(c)
+                    a, b = self.center_hz + a + shift[0], self.center_hz + b + shift[1]
+                    if c.enabled and beyond_nyquist(c, self.center_hz, shift):
+                        culprits.append(f"{c.label or f'Signal {i + 1}'} reaches {reach(a, b)}")
+            what = "; ".join(culprits) if culprits else f"the signal reaches {reach(lo, hi)}"
+            raise ValueError(f"{what} (carrier, offsets and hopping/sweep combined), beyond {band}")
         linear={"bpsk","qpsk","dbpsk","dqpsk","pi4-dqpsk","oqpsk","8psk","16qam","64qam","16apsk","32apsk"}
-        if self.waveform.value in linear and self.sample_rate/self.symbol_rate>2048:
-            raise ValueError("Linear modulation supports at most 2048 samples per symbol; raise symbol rate or lower sample rate")
+        if self.waveform.value in linear | {"2fsk","4fsk","msk","gmsk"} and self.sample_rate/self.symbol_rate>MAX_SAMPLES_PER_SYMBOL:
+            raise ValueError(f"symbol rate {eng(self.symbol_rate, 'Bd')} gives {self.sample_rate/self.symbol_rate:,.0f} samples per symbol at "
+                             f"{eng(self.sample_rate, 'S/s')}; at most {MAX_SAMPLES_PER_SYMBOL:,} are supported (use at least {eng(self.sample_rate/MAX_SAMPLES_PER_SYMBOL, 'Bd', 4)})")
         if self.waveform.value in linear | {"2fsk","4fsk","msk","gmsk"} and self.symbol_rate >= self.sample_rate / 1.5:
-            raise ValueError("symbol_rate must be comfortably below sample_rate")
+            raise ValueError(f"symbol rate {eng(self.symbol_rate, 'Bd')} needs more than 1.5 samples per symbol; at {eng(self.sample_rate, 'S/s')} use less than {eng(self.sample_rate / 1.5, 'Bd', 4)}")
         if self.waveform.value in {"am","fm","pm","ssb","dsb-sc"} and self.message_freq_hz >= nyq:
-            raise ValueError("message_freq_hz must lie inside Nyquist")
+            raise ValueError(f"message tone {eng(self.message_freq_hz)} is beyond {band}")
         if self.waveform == WaveformKind.OFDM and not self.ofdm_design.enabled and self.ofdm_occupied >= self.ofdm_fft:
             raise ValueError("ofdm_occupied must be smaller than ofdm_fft")
         if self.waveform == WaveformKind.OFDM and not self.ofdm_design.cp_lengths and self.ofdm_cp >= self.ofdm_fft:
@@ -246,7 +333,7 @@ class TxConfig(BaseModel):
             if pulsed and self.pulse_width_s > self.pri_s:
                 raise ValueError("pulse_width_s must be <= pri_s for pulsed radar waveforms")
             if self.waveform in {WaveformKind.LFM, WaveformKind.NLFM, WaveformKind.FMCW, WaveformKind.COSTAS} and self.sweep_bw_hz >= self.sample_rate:
-                raise ValueError("sweep_bw_hz must be below sample_rate for this waveform")
+                raise ValueError(f"sweep bandwidth {eng(self.sweep_bw_hz)} must be below the sample rate ({eng(self.sample_rate, 'S/s')})")
             if self.waveform == WaveformKind.P2 and self.polyphase_order % 2:
                 raise ValueError("P2 requires an even polyphase_order")
             if self.waveform == WaveformKind.ZADOFF_CHU:
@@ -258,27 +345,89 @@ class TxConfig(BaseModel):
                     raise ValueError("arbitrary radar segment durations must be positive")
                 freqs = self.arbitrary_start_freq_hz + self.arbitrary_stop_freq_hz
                 if freqs and max(abs(float(f)) for f in freqs) >= nyq:
-                    raise ValueError("arbitrary radar segment frequencies must lie inside Nyquist")
+                    raise ValueError(f"arbitrary radar segment frequencies must lie inside {band}")
         if self.waveform == WaveformKind.OFDM:
             from .ofdm import layout
             layout(self.ofdm_fft,self.ofdm_cp,self.ofdm_occupied,self.ofdm_design)
         return self
 
 
+def carrier_extent(cfg: TxConfig, sweeps: bool = True) -> tuple[float, float]:
+    """Lowest and highest carrier offset (Hz) the configuration visits.
+
+    Carriers are the signal's frequency offset plus the tones of a multitone,
+    the end points of a chirp, the peak instantaneous frequency of FSK, FM and
+    PM, every component of a composite and the full hop/sweep range: a carrier
+    beyond Nyquist would alias, so validation rejects it.  Modulation
+    bandwidth is not included; see ``bands.nominal_band`` for that estimate
+    (its excess only produces a warning).
+
+    ``sweeps=False`` leaves out swept frequencies (chirps and agility sweeps):
+    validation lets a sweep end exactly at ±fs/2 (a full-band chirp), while a
+    static carrier there is ambiguous and must lie strictly inside.
+    """
+    if cfg.waveform == WaveformKind.COMPOSITE:
+        spans = [carrier_extent(c, sweeps) for c in cfg.components if c.enabled] or [(0.0, 0.0)]
+        lo, hi = min(s[0] for s in spans), max(s[1] for s in spans)
+    elif cfg.waveform == WaveformKind.MULTITONE and cfg.tones_hz:
+        lo, hi = min(cfg.tones_hz), max(cfg.tones_hz)
+    elif cfg.waveform == WaveformKind.CHIRP:
+        lo, hi = (min(cfg.chirp_start_hz, cfg.chirp_stop_hz), max(cfg.chirp_start_hz, cfg.chirp_stop_hz)) if sweeps else (0.0, 0.0)
+    elif cfg.waveform in (WaveformKind.FSK2, WaveformKind.FSK4):
+        lo, hi = -cfg.fsk_deviation_hz, cfg.fsk_deviation_hz
+    elif cfg.waveform == WaveformKind.FM:
+        lo, hi = -cfg.fm_deviation_hz, cfg.fm_deviation_hz
+    elif cfg.waveform == WaveformKind.PM:
+        lo, hi = -cfg.pm_deviation_rad * cfg.message_freq_hz, cfg.pm_deviation_rad * cfg.message_freq_hz
+    else:
+        lo = hi = 0.0
+    a, b = frequency_extent(cfg.agility) if sweeps or cfg.agility.mode == "hop" else (0.0, 0.0)
+    return cfg.center_hz + lo + a, cfg.center_hz + hi + b
+
+
+def beyond_nyquist(cfg: TxConfig, offset: float = 0.0, shift: tuple[float, float] = (0.0, 0.0)) -> bool:
+    """Whether a carrier of ``cfg`` (moved by ``offset`` and an outer hop/sweep
+    ``shift``) leaves the sampled band: sweeps may touch ±fs/2, static carriers
+    must stay strictly inside."""
+    nyq = cfg.sample_rate / 2.0
+    lo, hi = carrier_extent(cfg)
+    slo, shi = carrier_extent(cfg, sweeps=False)
+    return (max(abs(offset + lo + shift[0]), abs(offset + hi + shift[1])) > nyq
+            or max(abs(offset + slo + shift[0]), abs(offset + shi + shift[1])) >= nyq)
+
+
+TxConfig.model_rebuild()
+
+
+class ChannelBand(BaseModel):
+    """An integration band for channel power, density and occupied bandwidth."""
+    model_config = ConfigDict(allow_inf_nan=False)
+    label: str = Field(default="CH", max_length=32)
+    center_hz: float = 0.0
+    width_hz: float = Field(default=100_000.0, gt=0.0)
+
+
 class SpectrumConfig(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
-    # Spectrum acquisition is always baseband-centered at DC.  View panning is a
-    # browser concern and does not retune the analyzer.
+    # Analyzer tuning in complex-baseband Hz.  Spans narrower than a quarter of
+    # the sample rate are digitally down-converted (zoom FFT), so the finest
+    # RBW is set by the capture length rather than the FFT-size limit.
+    center_hz: float = 0.0
     span_hz: float | None = Field(default=None, gt=0, le=MAX_SPECTRUM_SPAN)
     rbw_hz: float = Field(default=2_000.0, gt=0.1)
-    window: Literal["hann", "blackmanharris", "flattop", "kaiser", "rect"] = "hann"
+    # Blackman-Harris (4-term, -92 dB sidelobes) approximates an analyzer's
+    # Gaussian RBW filter: a tone shows one clean peak above the noise floor.
+    window: Literal["hann", "blackmanharris", "flattop", "kaiser", "rect"] = "blackmanharris"
     detector: Literal["average", "peak", "sample"] = "average"
     averaging: int = Field(default=4, ge=1, le=128)
     max_fft: int = Field(default=131_072, ge=256, le=1_048_576)
+    channels: list[ChannelBand] = Field(default_factory=list, max_length=8)
 
 
 class ChannelConfig(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
+    # Disable to pass recordings (or clean transmitter captures) through untouched.
+    enabled: bool = True
     snr_db: float | None = Field(default=20.0, ge=-30.0, le=100.0)
     freq_offset_hz: float = 0.0
     phase_offset_deg: float = 0.0
@@ -292,9 +441,15 @@ class ChannelConfig(BaseModel):
 
 
 class CostasConfig(BaseModel):
+    """Second-order carrier loop gains for unit-RMS symbols.
+
+    The receiver normalizes symbols before its loops, so these gains set the
+    same loop bandwidth at any signal level or samples per symbol.  Defaults
+    give ζ ≈ 0.75 and ωn ≈ 0.038 rad/symbol for a QPSK Costas detector.
+    """
     order: Literal[2, 4] = 4
-    alpha: float = Field(default=0.03, gt=0.0, le=1.0)
-    beta: float = Field(default=0.0005, gt=0.0, le=0.2)
+    alpha: float = Field(default=0.04, gt=0.0, le=1.0)
+    beta: float = Field(default=0.001, gt=0.0, le=0.2)
 
 
 class RxConfig(BaseModel):
@@ -309,7 +464,10 @@ class RxConfig(BaseModel):
     rolloff: float = Field(default=0.35, ge=0.0, le=1.0)
     timing_phase: float = Field(default=0.0, ge=-0.5, le=0.5)
     timing_recovery: Literal["manual", "mueller-muller", "gardner"] = "manual"
-    timing_gain: float = Field(default=0.30, gt=0.0, le=2.0)
+    # Linear demodulation analyses at most this many symbols from the start of each capture.
+    max_symbols: int = Field(default=8192, ge=64, le=1_000_000)
+    # Timing loop gain in symbols per unit detector output (independent of oversampling).
+    timing_gain: float = Field(default=0.015, gt=0.0, le=0.25)
     tuner_hz: float = 0
     manual_phase_deg: float = Field(default=0.0, ge=-180.0, le=180.0)
     fsk_deviation_hz: float = Field(default=25_000.0, gt=1.0)
@@ -341,12 +499,17 @@ class RxConfig(BaseModel):
     energy_window_symbols: float = Field(default=1.0, gt=0.05, le=256.0)
     preamble_correlation: bool = True
     preamble_threshold: float = Field(default=0.65, ge=0.0, le=1.0)
+    # Synchronized de-hopping: a cooperative receiver that knows the
+    # transmitter's hop/sweep schedules removes them before demodulation
+    # (outermost schedule first when receiving a hopping composite component).
+    dehop: list[FrequencyAgility] = Field(default_factory=list, max_length=2)
 
     @model_validator(mode="after")
     def _validate_receiver(self):
         linear={"bpsk","qpsk","dbpsk","dqpsk","pi4-dqpsk","oqpsk","8psk","16qam","64qam","16apsk","32apsk"}
-        if self.modulation in linear and not 1.5 < self.sample_rate/self.symbol_rate <= 2048:
-            raise ValueError("Linear receiver requires between 1.5 and 2048 samples per symbol")
+        if self.modulation in linear and not 1.5 < self.sample_rate/self.symbol_rate <= MAX_SAMPLES_PER_SYMBOL:
+            raise ValueError(f"The receiver needs 1.5 to {MAX_SAMPLES_PER_SYMBOL:,} samples per symbol: "
+                             f"{self.symbol_rate:,.0f} Bd at {self.sample_rate:,.0f} S/s is {self.sample_rate/self.symbol_rate:,.1f}")
         if self.modulation == "32apsk" and self.apsk_ratio3 <= self.apsk_ratio2:
             raise ValueError("APSK outer radius must exceed the middle radius")
         if self.modulation == "ofdm" and not self.ofdm_design.enabled and (self.ofdm_cp >= self.ofdm_fft or self.ofdm_occupied >= self.ofdm_fft):
@@ -357,7 +520,7 @@ class RxConfig(BaseModel):
         if self.frame_enabled:
             for block in self.frame_blocks:
                 rate = block.symbol_rate or self.symbol_rate
-                if not 1.5 < self.sample_rate / rate <= 2048:
+                if not 1.5 < self.sample_rate / rate <= MAX_SAMPLES_PER_SYMBOL:
                     raise ValueError(f"Frame block {block.name!r} has an invalid symbol rate for this sample rate")
         return self
 
@@ -374,3 +537,6 @@ class BlindResult(BaseModel):
     candidates: list[dict] = Field(default_factory=list)
     features: dict = Field(default_factory=dict)
     score_kind: str = "heuristic agreement; not a calibrated probability"
+    # Every rule evaluated, in order: question, feature checks against their
+    # thresholds and outcome.  The accepted stage produced ``modulation``.
+    trace: list[dict] = Field(default_factory=list)

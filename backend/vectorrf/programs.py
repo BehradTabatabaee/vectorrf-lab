@@ -47,8 +47,10 @@ def extensions():
 def extension_catalog():
     return [{'name':k,'waveform':callable(getattr(v,'waveform',None)),'process':callable(getattr(v,'process',None))} for k,v in extensions().items()]
 
-def program_samples(cfg:WaveProgram,fs,n,start_s=0,frame=0,seed=7):
-    time=start_s+np.arange(n)/fs;t=time%cfg.period_s
+def program_samples(cfg:WaveProgram,fs,n,start_s=0,frame=0,seed=7,start_sample=None):
+    # From an absolute sample index, time is exact for every sample of the
+    # stream (start_s + k/fs rounds differently in different captures).
+    time=(start_sample+np.arange(n))/fs if start_sample is not None else start_s+np.arange(n)/fs;t=time%cfg.period_s
     if cfg.mode=='expression':
         y=evaluate(cfg.expression,{'t':t,'time':time,'n':np.arange(n),'fs':fs,'T':cfg.period_s,'frame':frame,**cfg.parameters},n)
     elif cfg.mode=='iq':

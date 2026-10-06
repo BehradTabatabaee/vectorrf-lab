@@ -2,8 +2,8 @@
 from typing import Literal
 import numpy as np
 from scipy import signal
-from pydantic import BaseModel,Field,model_validator,ConfigDict
-from .modem import map_bits,bits_per_symbol,slice_symbols,evm_rms
+from pydantic import BaseModel,Field,ConfigDict
+from .modem import map_bits,bits_per_symbol,slice_symbols
 
 class GridCell(BaseModel):
     symbol:int=Field(ge=0,le=127)
@@ -139,24 +139,53 @@ def _synthesize_raw(cfg,n,bit_source,start_s=0):
        'grid_q':np.fft.fftshift(grid[:d.symbols],axes=1).imag.ravel().tolist()}
     return out[trim:trim+n].astype(np.complex64),bits,m
 
+def interpolate_channel(carriers,pilots,estimates):
+    """Pilot channel estimates -> every carrier.
+
+    Log-magnitude and unwrapped phase are interpolated linearly between pilots
+    and extrapolated with the outermost pilots' slope.  A gain and a delay
+    (linear phase across carriers, e.g. a fractional timing offset) are
+    therefore reproduced exactly on every carrier, including those outside the
+    pilot span, where clamping to the edge pilot would leave a phase error.
+    """
+    k=np.asarray(pilots,float);x=np.asarray(carriers,float);hp=np.asarray(estimates,complex)
+    if len(k)==1:
+        return np.full(len(x),hp[0])
+    def linear(y):
+        out=np.interp(x,k,y);low=x<k[0];high=x>k[-1]
+        out[low]=y[0]+(x[low]-k[0])*(y[1]-y[0])/(k[1]-k[0])
+        out[high]=y[-1]+(x[high]-k[-1])*(y[-1]-y[-2])/(k[-1]-k[-2])
+        return out
+    return np.exp(linear(np.log(np.maximum(np.abs(hp),1e-12)))+1j*linear(np.unwrap(np.angle(hp))))
+
 def receive(x,fs,nfft,cp,occupied,d,coarse_cfo=False,start_s=0):
     carriers,active,pilots,cpv=layout(nfft,cp,occupied,d);rows=[];cursor=0;b=0
     block_offset,trim=symbol_position(round(start_s*fs),nfft,cpv)
     if trim:
         cursor=nfft+cpv[block_offset%len(cpv)]-trim;block_offset+=1
     cfo=0.
+    # Transmit windowing ramps occupy the start of each prefix; the rest of it is free of ISI.
+    skip=d.window_samples if d.enabled else 0
     if coarse_cfo:
-        correlation=0j;at=cursor;index=block_offset;skip=d.window_samples if d.enabled else 0
+        correlation=0j;at=cursor;index=block_offset
         while at+nfft+cpv[index%len(cpv)]<=len(x) and index-block_offset<2048:
             length=cpv[index%len(cpv)]
             if length>skip:correlation+=np.vdot(x[at+skip:at+length],x[at+nfft+skip:at+nfft+length])
             at+=nfft+length;index+=1
         cfo=float(np.angle(correlation)*fs/(2*np.pi*nfft))
         x=x*np.exp(-2j*np.pi*cfo*np.arange(len(x))/fs)
+    # The FFT window starts midway through the ISI-free part of the prefix, so
+    # a fractional or small timing error spreads none of the next symbol into
+    # it.  Advancing the window by ``a`` samples multiplies carrier k by
+    # exp(-j2πka/N); that known ramp is removed exactly.
+    ramps={}
     while cursor+nfft+cpv[(b+block_offset)%len(cpv)]<=len(x) and b<2048:
-        count=cpv[(b+block_offset)%len(cpv)];rows.append(np.fft.fft(x[cursor+count:cursor+count+nfft])/np.sqrt(nfft));cursor+=count+nfft;b+=1
+        count=cpv[(b+block_offset)%len(cpv)];advance=max(0,count-skip)//2
+        if advance not in ramps:ramps[advance]=np.exp(2j*np.pi*np.arange(nfft)*advance/nfft)/np.sqrt(nfft)
+        start=cursor+count-advance
+        rows.append(np.fft.fft(x[start:start+nfft])*ramps[advance]);cursor+=count+nfft;b+=1
     if not rows:return np.array([],complex),np.array([],np.uint8),{},{}
-    grid=np.array(rows);channels=[];data=[];formats=[];calibrations=[];mod=d.modulation if d.enabled else 'qpsk'
+    grid=np.array(rows);channels=[];data=[];formats=[];calibrations=[];mod=d.modulation if d.enabled else 'qpsk';blind_phase=None
     format_names=['bpsk','qpsk','8psk','16qam','64qam'];mapping_cache={}
     for b,row in enumerate(grid):
         symbol=b+block_offset
@@ -176,11 +205,19 @@ def receive(x,fs,nfft,cp,occupied,d,coarse_cfo=False,start_s=0):
             mapping_cache[key]=(known,cs,gains,fmts)
         known,cs,gains,fmts=mapping_cache[key]
         h=np.ones(nfft,complex);calibrated=False
+        if not known and len(cs) and mod=='qpsk' and np.all(fmts==format_names.index('qpsk')):
+            # No pilots: a common phase per symbol from the QPSK data's fourth
+            # power (z^4 = -1 on the constellation), on the branch nearest the
+            # previous symbol's, so the residual CFO and channel phase are
+            # tracked; the 90° ambiguity that remains is resolved downstream.
+            estimate=float(np.angle(-np.mean(row[cs%nfft]**4)))/4
+            if blind_phase is not None:estimate+=round((blind_phase-estimate)/(np.pi/2))*(np.pi/2)
+            blind_phase=estimate;row=row*np.exp(-1j*estimate)
         if d.enabled and d.equalizer=='pilot-ls' and known:
             keys=sorted(k for k,v in known.items() if abs(v)>1e-10)
             if keys:
                 calibrated=True
-                hp=np.array([row[k%nfft]/known[k] for k in keys]);h_order=np.interp(carriers,keys,hp.real)+1j*np.interp(carriers,keys,hp.imag);h[carriers%nfft]=h_order
+                hp=np.array([row[k%nfft]/known[k] for k in keys]);h[carriers%nfft]=interpolate_channel(carriers,keys,hp)
                 row=row/np.where(abs(h)>1e-8,h,1)
         channels.append(h)
         data.append(row[cs%nfft]/gains);formats.append(fmts)
@@ -203,5 +240,5 @@ def receive(x,fs,nfft,cp,occupied,d,coarse_cfo=False,start_s=0):
                'magnitude_error_percent':(100*(abs(z)-abs(decisions))/ref_rms)[:2000].tolist(),
                'phase_error_deg':np.rad2deg(np.angle(z*decisions.conj()))[:2000].tolist(),
                'ofdm_channel_magnitude':np.abs(np.fft.fftshift(np.mean(channels,axis=0))).tolist(),
-               'ofdm_carriers':carriers.tolist(),'ofdm_symbols':len(rows),'ofdm_method':'Known symbol boundaries; per-symbol pilot LS with frequency interpolation'}
+               'ofdm_carriers':carriers.tolist(),'ofdm_symbols':len(rows),'ofdm_blind_phase':blind_phase is not None,'ofdm_method':'Known symbol boundaries, FFT window centred in the cyclic prefix; per-symbol pilot LS, magnitude and phase interpolated across carriers'}
     return syms,bits,metrics,telemetry
