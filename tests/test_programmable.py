@@ -10,7 +10,7 @@ from vectorrf.programs import WaveProgram,program_samples
 from vectorrf.expressions import evaluate
 from vectorrf.ofdm import OFDMDesign,resource_grid
 from vectorrf.pipeline import Pipeline,process_chain
-from vectorrf.radar_sim import RadarExperiment,SceneTarget,ArrayModel,simulate,transmitter,array_weights,directions
+from vectorrf.radar_sim import RadarExperiment,SceneTarget,ArrayModel,simulate,transmitter
 
 
 def test_live_captures_change_data_and_are_reproducible():
