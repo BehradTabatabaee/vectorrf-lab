@@ -13,7 +13,8 @@ client = TestClient(app)
 @pytest.mark.parametrize('waveform', ['tone', 'multitone', 'awgn', 'chirp', 'custom'])
 def test_basic_sources_use_real_receiver_path(waveform):
     response = client.post('/api/rx/loopback', json={
-        'tx': {'waveform': waveform, 'sample_rate': 200_000, 'duration': 0.004},
+        # Multitone frequencies must lie inside Nyquist (±100 kHz here).
+        'tx': {'waveform': waveform, 'sample_rate': 200_000, 'duration': 0.004, 'tones_hz': [-80_000, 15_000, 45_000]},
         'channel': {'snr_db': None},
         'rx': {'modulation': waveform},
     })

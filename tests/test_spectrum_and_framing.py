@@ -14,10 +14,13 @@ from vectorrf.spectrum import analyze
 client = TestClient(app)
 
 
-def test_spectrum_accepts_10mhz_but_not_more():
+def test_spectrum_span_limit_follows_maximum_sample_rate():
+    from vectorrf.models import MAX_SAMPLE_RATE, MAX_SPECTRUM_SPAN
+    assert MAX_SPECTRUM_SPAN == MAX_SAMPLE_RATE >= 2e9
     assert SpectrumConfig(span_hz=10_000_000).span_hz == 10_000_000
+    assert SpectrumConfig(span_hz=MAX_SPECTRUM_SPAN).span_hz == MAX_SPECTRUM_SPAN
     with pytest.raises(ValidationError):
-        SpectrumConfig(span_hz=10_000_001)
+        SpectrumConfig(span_hz=MAX_SPECTRUM_SPAN * 1.0001)
 
 
 @pytest.mark.parametrize('power_dbm', [-50.0, 100.0])
@@ -108,7 +111,7 @@ def test_live_stream_recovers_after_invalid_negative_span():
 
         ws.send_json({'action': 'update', 'spectrum': {'span_hz': -1, 'rbw_hz': 2_000}})
         err = _next_json(ws, 'error')
-        assert 'span_hz' in err['message']
+        assert 'Span' in err['message'] and err['scope'] == 'spectrum'
 
         ws.send_json({
             'action': 'update',

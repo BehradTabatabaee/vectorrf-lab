@@ -26,10 +26,13 @@ def _next_json(ws, wanted, limit=60):
 
 
 def test_release_metadata_and_help_page_are_published():
+    from vectorrf import __version__
+    from vectorrf.models import MAX_SAMPLE_RATE, MAX_CAPTURE_SAMPLES
     health = client.get('/api/health')
     assert health.status_code == 200
-    assert health.json()['version'] == '1.2.0'
-    assert health.json()['max_spectrum_span'] == 10_000_000
+    assert health.json()['version'] == __version__ == '1.2.0'
+    assert health.json()['max_spectrum_span'] == MAX_SAMPLE_RATE
+    assert health.json()['max_capture_samples'] == MAX_CAPTURE_SAMPLES
     help_page = client.get('/help')
     assert help_page.status_code == 200
     text = help_page.text
@@ -91,10 +94,10 @@ def test_zero_span_default_payload_is_display_bounded_and_frequency_is_correct_a
     assert np.median(measured[1:]) == pytest.approx(f0, abs=1.0)
 
 
-def test_direct_api_rejects_50mhz_span_without_poisoning_live_websocket_state():
+def test_direct_api_rejects_oversized_span_without_poisoning_live_websocket_state():
     bad = client.post('/api/spectrum', json={
         'tx': {'waveform': 'tone', 'sample_rate': 1_000_000, 'duration': .004},
-        'spectrum': {'span_hz': 50_000_000, 'rbw_hz': 2_000},
+        'spectrum': {'span_hz': 50_000_000_000, 'rbw_hz': 2_000},
     })
     assert bad.status_code == 422
 
@@ -108,9 +111,9 @@ def test_direct_api_rejects_50mhz_span_without_poisoning_live_websocket_state():
         first = _next_json(ws, 'metrics')
         assert first['peak_hz'] == pytest.approx(40_000, abs=4_000)
 
-        ws.send_json({'action': 'update', 'spectrum': {'span_hz': 50_000_000, 'rbw_hz': 2_000}})
+        ws.send_json({'action': 'update', 'spectrum': {'span_hz': 50_000_000_000, 'rbw_hz': 2_000}})
         err = _next_json(ws, 'error')
-        assert 'span_hz' in err['message']
+        assert 'Span' in err['message'] and '5 GHz' in err['message']
 
         ws.send_json({
             'action': 'update',

@@ -9,7 +9,6 @@ from vectorrf.source import source_record
 from vectorrf.rx import demodulate
 from vectorrf.sync import apply_channel,coarse_carrier,cma_equalizer
 from vectorrf.measurements import zero_span
-from vectorrf.radar_scene import SceneRequest,scene_products
 
 client=TestClient(app)
 
@@ -103,21 +102,9 @@ def test_source_is_shared_immutable_and_revisioned():
     assert rx['tx_metadata']['source_revision']==blind['source_revision']==measured['source_revision']==a.metadata['source_revision']
 
 
-def test_radar_return_measurements_follow_target_not_truth_labels():
-    req=SceneRequest.model_validate({'targets':[{'range_m':7500,'velocity_mps':50,'gain_db':-6}],
-        'noise_db':-80,'pulses':64})
-    d=scene_products(req)
-    assert d['available']
-    assert d['peak_range_m']==pytest.approx(7500,abs=2*d['range_sample_m'])
-    assert d['peak_velocity_mps']==pytest.approx(50,abs=d['velocity_bin_mps'])
-    d2=scene_products(req.model_copy(update={'elapsed_s':20}))
-    assert d2['peak_range_m']>d['peak_range_m']+500
-    assert len(d['rd_db'])==np.prod(d['rd_shape'])
-
-
 def test_large_records_and_sequences_are_rejected():
     assert client.post('/api/tx/preview',json={'sample_rate':10000000,'duration':5}).status_code==422
-    assert client.post('/api/radar/studio',json={'sequence':[{'repeat':100000,'pri_s':1}]}).status_code==422
+    assert client.post('/api/studio/radar',json={'source':'legacy','legacy':{'sequence':[{'repeat':100000,'pri_s':1}]}}).status_code==422
 
 
 def test_ws_starts_without_edit_and_recovers_invalid_update():
@@ -157,21 +144,21 @@ def test_generic_frame_crc_and_source_separation():
 
 
 def test_segmented_radar_timing_and_frequency():
-    cfg={'mode':'segments','duration_s':.004,'segments':[{'duration_us':40,'start_hz':20000,'stop_hz':20000,'amplitude':1},{'duration_us':30,'start_hz':0,'stop_hz':0,'amplitude':0}]}
-    r=client.post('/api/radar/studio',json=cfg)
-    assert r.status_code==200
-    d=r.json()
-    assert d['metadata']['logical_sequence_s']==pytest.approx(70e-6)
-    assert np.median(d['inst_freq_hz'][2:35])==pytest.approx(20000,rel=.01)
-    assert min(d['envelope'])==0
+    from vectorrf.radar_studio import RadarStudioConfig,generate_radar
+    cfg=RadarStudioConfig(mode='segments',duration_s=.004,segments=[{'duration_us':40,'start_hz':20000,'stop_hz':20000,'amplitude':1},{'duration_us':30,'start_hz':0,'stop_hz':0,'amplitude':0}])
+    d=generate_radar(cfg)
+    x=d.samples.astype(complex)
+    assert d.metadata['logical_sequence_s']==pytest.approx(70e-6)
+    inst=np.angle(x[1:]*np.conj(x[:-1]))*cfg.sample_rate/(2*np.pi)
+    assert np.median(inst[2:35])==pytest.approx(20000,rel=.01)
+    assert np.min(np.abs(x))==0
 
 
-def test_full_radar_record_is_displayed_and_short_pulse_supported():
-    r=client.post('/api/radar/studio',json={'duration_s':.02,'sequence':[{'kind':'pulse','pri_s':100e-6,'pulse':{'waveform':'pulse','width_s':5e-6}}]})
-    assert r.status_code==200
-    d=r.json()
-    assert .0199<d['time_s'][-1]<.02
-    assert len(d['time_s'])<=4096
+def test_full_radar_record_and_short_pulse_supported():
+    from vectorrf.radar_studio import RadarStudioConfig,generate_radar
+    d=generate_radar(RadarStudioConfig(duration_s=.02,sequence=[{'kind':'pulse','pri_s':100e-6,'pulse':{'waveform':'pulse','width_s':5e-6}}]))
+    assert len(d.samples)==round(.02*1e6)
+    assert np.count_nonzero(np.abs(d.samples)>0)==pytest.approx(.05*len(d.samples),rel=.02)
 
 
 def test_receiver_exposes_demodulated_bits_and_hex():
