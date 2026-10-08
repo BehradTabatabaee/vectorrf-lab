@@ -4,28 +4,31 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>VectorRF Lab</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2314181b'/%3E%3Cpath d='M2 11h2l2-7 2 9 2-6 2 4h2' fill='none' stroke='%23e9b04b' stroke-width='1.6' stroke-linejoin='round'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/assets/styles.css" />
+  <script type="module" src="/assets/js/main.js"></script>
 </head>
-<body>
+<body class="app-body">
   <div id="app" class="app">
-    <header class="menubar">
-      <div class="app-title">VectorRF Lab <span>DSP / RF Workbench</span></div>
-      <div class="engine-state"><i id="engineLed"></i><span id="engineText">connecting</span></div>
-      <a class="help-link" href="/help" target="_blank" rel="noopener">Help</a>
+    <header class="topbar">
+      <div class="brand"><svg class="brand-mark" viewBox="0 0 16 16" aria-hidden="true"><rect width="16" height="16" rx="3" fill="#14181b"/><path d="M2 11h2l2-7 2 9 2-6 2 4h2" fill="none" stroke="#e9b04b" stroke-width="1.6" stroke-linejoin="round"/></svg>VectorRF Lab <small>RF / DSP workbench</small></div>
+      <nav id="workspaceTabs" class="workspace-tabs" aria-label="Workspaces"></nav>
+      <div class="topbar-right">
+        <div class="source-pill" title="Live source shared by Spectrum, Receiver and Classifier"></div>
+        <div class="engine-state"><i id="engineLed"></i><span id="engineText">connecting</span></div>
+        <a class="help-link" href="/help" target="_blank" rel="noopener">Help</a>
+      </div>
     </header>
-    <nav id="workspaceTabs" class="workspace-tabs"></nav>
-    <div id="workspace" class="workspace"></div>
+    <main id="workspace" class="workspace"></main>
+    <div id="engineError" class="engine-error" role="alert" hidden></div>
     <footer class="statusbar">
-      <span id="statusSource">SOURCE —</span>
-      <span id="statusFs">FS —</span>
-      <span id="statusRate">UPDATE —</span>
+      <span>SOURCE <b id="statusSource">—</b></span>
+      <span>FS <b id="statusFs">—</b></span>
+      <span>DISPLAY <b id="statusRate">—</b></span>
+      <span id="statusWork" hidden title="Real time: each update processes this share of the capture at the current time and drops the rest">PROCESSED <b id="statusWorkValue">—</b></span>
       <span class="status-spacer"></span>
-      <span id="statusMessage">READY</span>
+      <span class="status-message" id="statusMessage">starting</span>
     </footer>
   </div>
-  <div id="toast" class="toast"></div>
-  <script src="/assets/app.js"></script>
-  <script src="/assets/studio.js"></script>
-  <script src="/assets/workbench.js"></script>
 </body>
 </html>
