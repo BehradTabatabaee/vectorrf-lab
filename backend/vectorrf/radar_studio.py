@@ -6,10 +6,8 @@ import math
 import numpy as np
 from pydantic import BaseModel, Field, model_validator
 
-from .models import MAX_SAMPLE_RATE, TxConfig
+from .models import MAX_CAPTURE_SAMPLES, MAX_SAMPLE_RATE, TxConfig
 from .signal import generate
-from .spectrum import analyze as spectrum_analyze
-from .models import SpectrumConfig
 
 
 class RadarPulseConfig(BaseModel):
@@ -100,8 +98,8 @@ class RadarStudioConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_cfg(self):
-        if self.duration_s*self.sample_rate>2_000_000:
-            raise ValueError("Radar record is limited to 2 million samples")
+        if self.duration_s*self.sample_rate>MAX_CAPTURE_SAMPLES:
+            raise ValueError(f"Radar record is limited to {MAX_CAPTURE_SAMPLES:,} samples")
         nyq = self.sample_rate / 2.0
         if self.mode == "segments" and any(max(abs(x.start_hz),abs(x.stop_hz))>=nyq for x in self.segments):
             raise ValueError("Segment frequencies must lie inside Nyquist")
@@ -111,11 +109,11 @@ class RadarStudioConfig(BaseModel):
             raise ValueError("sweep bandwidth must be below sample rate")
         if max(abs(self.stepped_start_hz), abs(self.stepped_stop_hz)) >= nyq:
             raise ValueError("stepped CW frequencies must lie inside Nyquist")
-        if sum(s.duration_us for s in self.segments)*1e-6*self.sample_rate>2_000_000:
-            raise ValueError("Segment sequence exceeds 2 million samples")
+        if sum(s.duration_us for s in self.segments)*1e-6*self.sample_rate>MAX_CAPTURE_SAMPLES:
+            raise ValueError(f"Segment sequence exceeds {MAX_CAPTURE_SAMPLES:,} samples")
         budget=sum(item.repeat*(item.off_time_s if item.kind=='off' else item.pri_s*(1+item.pri_jitter_fraction+item.pri_wobble_fraction)) for item in self.sequence)*self.sample_rate
-        if budget>2_000_000:
-            raise ValueError("Logical radar sequence exceeds 2 million samples; reduce repetition or PRI")
+        if budget>MAX_CAPTURE_SAMPLES:
+            raise ValueError(f"Logical radar sequence exceeds {MAX_CAPTURE_SAMPLES:,} samples; reduce repetition or PRI")
         for item in self.sequence:
             if item.kind == "pulse" and item.pulse is not None:
                 if abs(item.frequency_offset_hz + item.pulse.frequency_offset_hz) + item.pulse.sweep_bw_hz / 2.0 >= nyq and item.pulse.waveform in {"lfm", "nlfm", "costas"}:
@@ -268,87 +266,58 @@ def generate_radar(cfg: RadarStudioConfig) -> RadarStudioResult:
     return _continuous(cfg) if cfg.mode == "continuous" else _sequence(cfg)
 
 
-def radar_products(cfg: RadarStudioConfig, max_points: int = 4096) -> dict:
-    result = generate_radar(cfg)
-    x = result.samples.astype(np.complex128)
-    fs = result.sample_rate
-    stride = max(1, int(np.ceil(len(x) / max_points)))
-    xd = x[::stride][:max_points]
-    inst_full = np.r_[0.0, np.angle(x[1:]*np.conj(x[:-1])) * fs/(2*np.pi)]
-    instf = inst_full[::stride][:max_points]
+C = 299_792_458.0
 
-    sp = spectrum_analyze(x, fs, SpectrumConfig(rbw_hz=max(100.0, fs / 4096.0), averaging=2, max_fft=32768))
 
-    # Pulse-compression view: use the first active island when possible.
-    amp = np.abs(x)
-    active = np.flatnonzero(amp > 0.08 * max(1e-12, float(np.max(amp))))
-    if active.size:
-        gaps = np.flatnonzero(np.diff(active) > 1)
-        end_i = gaps[0] + 1 if gaps.size else active.size
-        ref = x[active[:end_i]]
-    else:
-        ref = x[:min(len(x), 4096)]
-    ref_stride=max(1,int(np.ceil(len(ref)/8192)))
-    ref = ref[::ref_stride]
-    ref_fs=fs/ref_stride
-    if len(ref) >= 2:
-        ac = np.correlate(ref, ref, mode="full")[len(ref)-1:]
-        ac = np.abs(ac)
-        ac = ac / max(1e-12, float(ac[0]))
-        ac_db = 20.0 * np.log10(np.maximum(ac, 1e-6))
-    else:
-        ac_db = np.zeros(1)
+def pulse_bandwidth_hz(pulse: RadarPulseConfig) -> float:
+    """Nominal bandwidth that sets a pulse's range resolution (c / 2B)."""
+    w = pulse.waveform
+    if w in {"lfm", "nlfm", "costas"}:
+        return pulse.sweep_bw_hz
+    if w == "stepped-frequency":
+        return pulse.stepped_steps * pulse.stepped_spacing_hz
+    chips = {"barker": pulse.barker_length, "frank": pulse.polyphase_order ** 2, "p1": pulse.polyphase_order ** 2,
+             "p2": pulse.polyphase_order ** 2, "custom-phase": max(2, len(pulse.custom_phase_deg))}.get(w)
+    if chips is None and w in {"p3", "p4", "zadoff-chu"}:
+        chips = pulse.phase_code_chips
+    return (chips or 1) / pulse.width_s
 
-    # Bounded delay-Doppler ambiguity surface.  This is a visualization product,
-    # not a metrology-grade ambiguity implementation.
-    amb_ref = ref
-    amb_stride=max(1,int(np.ceil(len(amb_ref)/768)))
-    amb_ref=amb_ref[::amb_stride]
-    amb_fs=ref_fs/amb_stride
-    ndelay = min(97, max(17, 2 * (len(amb_ref) // 24) + 1))
-    max_lag = max(1, min(len(amb_ref) - 2, ndelay // 2)) if len(amb_ref) > 3 else 1
-    lags = np.linspace(-max_lag, max_lag, ndelay).astype(int)
-    dopplers = np.linspace(-0.25 * amb_fs, 0.25 * amb_fs, 49)
-    ambiguity = np.zeros((len(dopplers), len(lags)), dtype=np.float32)
-    if len(amb_ref) >= 4:
-        n = np.arange(len(amb_ref), dtype=float)
-        for di, fd in enumerate(dopplers):
-            mixed = amb_ref * np.exp(-1j * 2.0 * np.pi * fd * n / amb_fs)
-            for li, lag in enumerate(lags):
-                if lag >= 0:
-                    a, b = mixed[lag:], amb_ref[:len(amb_ref)-lag]
-                else:
-                    q = -lag
-                    a, b = mixed[:len(amb_ref)-q], amb_ref[q:]
-                ambiguity[di, li] = abs(np.vdot(b, a)) if len(a) else 0.0
-        peak = float(np.max(ambiguity))
-        if peak > 0:
-            ambiguity /= peak
-        ambiguity = 20.0 * np.log10(np.maximum(ambiguity, 1e-4))
 
-    return {
-        "metadata": result.metadata,
-        "sample_rate": fs,
-        "time_s": (np.arange(len(xd)) * stride / fs).astype(float).tolist(),
-        "envelope": np.abs(xd).astype(float).tolist(),
-        "i": xd.real.astype(float).tolist(),
-        "q": xd.imag.astype(float).tolist(),
-        "inst_freq_hz": instf.astype(float).tolist(),
-        "phase_deg": np.rad2deg(np.angle(xd)).astype(float).tolist(),
-        "freq_hz": sp.freq_hz.astype(float).tolist(),
-        "psd_db": sp.psd_db.astype(float).tolist(),
-        "autocorr_db": ac_db.astype(float).tolist(),
-        "autocorr_delay_s": (np.arange(len(ac_db))/ref_fs).tolist(),
-        "ambiguity_delay_s": (lags/amb_fs).tolist(),
-        "ambiguity_db": ambiguity.reshape(-1).astype(float).tolist(),
-        "ambiguity_shape": [int(ambiguity.shape[0]), int(ambiguity.shape[1])],
-        "ambiguity_delay_samples": lags.astype(int).tolist(),
-        "ambiguity_doppler_hz": dopplers.astype(float).tolist(),
-        "metrics": {
-            "peak_hz": sp.peak_hz,
-            "peak_db": sp.peak_db,
-            "occupied_bw_hz": sp.bandwidth_99_hz,
-            "rbw_hz": sp.rbw_actual_hz,
-            "crest_factor_db": float(20.0 * np.log10((np.max(np.abs(x)) + 1e-12) / (np.sqrt(np.mean(np.abs(x) ** 2)) + 1e-12))),
-        },
-    }
+def design_summary(cfg: RadarStudioConfig, carrier_hz: float) -> dict:
+    """Radar engineering figures of a pulse/CW design at ``carrier_hz``."""
+    lam = C / carrier_hz
+    if cfg.mode == "continuous":
+        w = cfg.continuous_waveform
+        bandwidth = {"fmcw": cfg.sweep_bw_hz, "pmcw": cfg.pmcw_chip_rate,
+                     "stepped-cw": abs(cfg.stepped_stop_hz - cfg.stepped_start_hz)}.get(w, 0.0)
+        period = {"fmcw": cfg.sweep_period_s, "pmcw": cfg.pmcw_chips / cfg.pmcw_chip_rate,
+                  "stepped-cw": cfg.stepped_points * cfg.stepped_dwell_s}.get(w)
+        return {"mode": "continuous", "waveform": w, "bandwidth_hz": bandwidth,
+                "range_resolution_m": C / (2 * bandwidth) if bandwidth else None,
+                "period_s": period, "unambiguous_velocity_mps": lam / (4 * period) if period else None,
+                "unambiguous_range_m": C * period / 2 if period else None, "items": []}
+    if cfg.mode == "segments":
+        duration = sum(s.duration_us for s in cfg.segments) * 1e-6
+        freqs = [f for s in cfg.segments for f in (s.start_hz, s.stop_hz)]
+        bandwidth = max(freqs) - min(freqs) if freqs else 0.0
+        return {"mode": "segments", "bandwidth_hz": bandwidth, "period_s": duration,
+                "range_resolution_m": C / (2 * bandwidth) if bandwidth else None,
+                "unambiguous_range_m": C * duration / 2, "unambiguous_velocity_mps": lam / (4 * duration), "items": []}
+    items, on_time, total = [], 0.0, 0.0
+    for item in cfg.sequence:
+        if item.kind == "off":
+            total += item.off_time_s * item.repeat
+            items.append({"name": item.name, "kind": "off", "duration_s": item.off_time_s * item.repeat})
+            continue
+        p = item.pulse
+        bandwidth = pulse_bandwidth_hz(p)
+        on_time += p.width_s * item.repeat
+        total += item.pri_s * item.repeat
+        items.append({"name": item.name, "kind": "pulse", "waveform": p.waveform, "repeat": item.repeat,
+                      "prf_hz": 1 / item.pri_s, "duty": p.width_s / item.pri_s, "bandwidth_hz": bandwidth,
+                      "compression_ratio": p.width_s * bandwidth, "range_resolution_m": C / (2 * bandwidth),
+                      "blind_range_m": C * p.width_s / 2, "unambiguous_range_m": C * item.pri_s / 2,
+                      "unambiguous_velocity_mps": lam / (4 * item.pri_s),
+                      "velocity_resolution_mps": lam / (2 * item.pri_s * item.repeat)})
+    return {"mode": "sequence", "sequence_s": total, "duty": on_time / total if total else 0.0,
+            "carrier_hz": carrier_hz, "wavelength_m": lam, "items": items}
