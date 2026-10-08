@@ -1,0 +1,17 @@
+{
+  "name": "QPSK link",
+  "description": "50 kBd QPSK carrying a full-period PN15 sequence with transmitter AWGN (the UI's default signal).",
+  "tx": {
+    "waveform": "qpsk",
+    "sample_rate": 1000000.0,
+    "duration": 0.02,
+    "symbol_rate": 50000.0,
+    "rolloff": 0.35,
+    "filter_span_symbols": 16,
+    "data_source": "pn",
+    "pn_order": 15,
+    "pn_bits": 32767,
+    "snr_db": 40,
+    "amplitude": 1.0
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "OFDM with CW interferer",
+  "description": "A 64-carrier OFDM signal with a −25 dBc CW interferer inside its band and a bursty GMSK neighbour.",
+  "tx": {
+    "waveform": "composite",
+    "sample_rate": 4000000.0,
+    "duration": 0.02,
+    "snr_db": 35,
+    "components": [
+      {
+        "label": "OFDM",
+        "waveform": "ofdm",
+        "power_dbm": 0.0,
+        "center_hz": -300000.0,
+        "data_source": "pn"
+      },
+      {
+        "label": "CW interferer",
+        "waveform": "tone",
+        "power_dbm": -25.0,
+        "center_hz": -150000.0
+      },
+      {
+        "label": "GMSK burst",
+        "waveform": "gmsk",
+        "power_dbm": -6.0,
+        "center_hz": 1650000.0,
+        "symbol_rate": 200000.0,
+        "data_source": "pn",
+        "burst_enabled": true,
+        "burst_period_s": 0.005,
+        "burst_duty": 0.4
+      }
+    ]
+  }
+}

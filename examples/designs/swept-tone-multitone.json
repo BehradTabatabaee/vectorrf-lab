@@ -1,0 +1,36 @@
+{
+  "name": "Swept tone with multitone",
+  "description": "A tone surrounded by four tones, swept together up and down across ±3 MHz every 4 ms.",
+  "tx": {
+    "waveform": "composite",
+    "sample_rate": 10000000.0,
+    "duration": 0.004,
+    "snr_db": 45,
+    "agility": {
+      "enabled": true,
+      "mode": "sweep",
+      "start_hz": -3000000.0,
+      "stop_hz": 3000000.0,
+      "order": "up-down",
+      "dwell_s": 0.002
+    },
+    "components": [
+      {
+        "label": "Centre tone",
+        "waveform": "tone",
+        "power_dbm": -10.0
+      },
+      {
+        "label": "Side tones",
+        "waveform": "multitone",
+        "power_dbm": -16.0,
+        "tones_hz": [
+          -400000.0,
+          -200000.0,
+          200000.0,
+          400000.0
+        ]
+      }
+    ]
+  }
+}

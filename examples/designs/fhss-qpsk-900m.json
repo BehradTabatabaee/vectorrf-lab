@@ -1,0 +1,25 @@
+{
+  "name": "FHSS QPSK 900 MHz – 1 GHz",
+  "description": "80 kBd QPSK hopping 900 MHz → 1 GHz in 100 kHz steps (1001 hops), 100 µs dwell and 20 µs off-time, around a 950 MHz RF centre.",
+  "tx": {
+    "waveform": "qpsk",
+    "sample_rate": 125000000.0,
+    "duration": 0.002,
+    "rf_center_hz": 950000000.0,
+    "symbol_rate": 80000.0,
+    "rolloff": 0.2,
+    "data_source": "pn",
+    "snr_db": 35,
+    "agility": {
+      "enabled": true,
+      "mode": "hop",
+      "plan": "linear",
+      "start_hz": -50000000.0,
+      "stop_hz": 50000000.0,
+      "step_hz": 100000.0,
+      "dwell_s": 0.0001,
+      "off_s": 2e-05,
+      "ramp_s": 2e-06
+    }
+  }
+}

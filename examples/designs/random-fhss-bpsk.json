@@ -1,0 +1,24 @@
+{
+  "name": "Pseudo-random FHSS BPSK",
+  "description": "BPSK hopping over a 64-channel grid in a seeded pseudo-random order with raised-cosine hop edges.",
+  "tx": {
+    "waveform": "bpsk",
+    "sample_rate": 20000000.0,
+    "duration": 0.005,
+    "symbol_rate": 250000.0,
+    "data_source": "pn",
+    "snr_db": 30,
+    "agility": {
+      "enabled": true,
+      "mode": "hop",
+      "plan": "random",
+      "start_hz": -7875000.0,
+      "stop_hz": 7875000.0,
+      "step_hz": 250000.0,
+      "dwell_s": 0.0002,
+      "off_s": 1e-05,
+      "ramp_s": 5e-06,
+      "seed": 42
+    }
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "name": "Independently chirping tones",
+  "description": "Three tones, each with its own linear sweep, rate and direction.",
+  "tx": {
+    "waveform": "composite",
+    "sample_rate": 10000000.0,
+    "duration": 0.004,
+    "snr_db": 45,
+    "components": [
+      {
+        "label": "Up chirp",
+        "waveform": "tone",
+        "power_dbm": -12.0,
+        "agility": {
+          "enabled": true,
+          "mode": "sweep",
+          "start_hz": -4000000.0,
+          "stop_hz": 4000000.0,
+          "dwell_s": 0.001
+        }
+      },
+      {
+        "label": "Down chirp",
+        "waveform": "tone",
+        "power_dbm": -12.0,
+        "agility": {
+          "enabled": true,
+          "mode": "sweep",
+          "start_hz": 4000000.0,
+          "stop_hz": -4000000.0,
+          "dwell_s": 0.002
+        }
+      },
+      {
+        "label": "Triangle",
+        "waveform": "tone",
+        "power_dbm": -18.0,
+        "agility": {
+          "enabled": true,
+          "mode": "sweep",
+          "start_hz": -2000000.0,
+          "stop_hz": 2000000.0,
+          "order": "up-down",
+          "dwell_s": 0.0005
+        }
+      }
+    ]
+  }
+}

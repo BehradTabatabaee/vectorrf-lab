@@ -1,0 +1,27 @@
+{
+  "name": "Tone + 10 MHz QPSK",
+  "description": "A CW tone at 0 Hz and a 10 MHz-wide QPSK carrier (7.5 MBd, RRC roll-off 1/3) at +20 MHz, each at its own power, sampled at 60 MS/s.",
+  "tx": {
+    "waveform": "composite",
+    "sample_rate": 60000000.0,
+    "duration": 0.002,
+    "snr_db": 40,
+    "components": [
+      {
+        "label": "CW tone",
+        "waveform": "tone",
+        "power_dbm": -10.0,
+        "center_hz": 0.0
+      },
+      {
+        "label": "QPSK 10 MHz",
+        "waveform": "qpsk",
+        "power_dbm": -20.0,
+        "center_hz": 20000000.0,
+        "symbol_rate": 7500000.0,
+        "rolloff": 0.3333333333333333,
+        "data_source": "pn"
+      }
+    ]
+  }
+}
