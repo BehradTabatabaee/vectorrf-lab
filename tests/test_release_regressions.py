@@ -36,10 +36,10 @@ def test_release_metadata_and_help_page_are_published():
     help_page = client.get('/help')
     assert help_page.status_code == 200
     text = help_page.text
-    assert 'VectorRF Lab 1.2' in text
+    assert 'VectorRF Lab' in text and 'User guide' in text
     assert 'Spectrum analyzer' in text
     assert 'OUTSIDE SOURCE NYQUIST' in text
-    assert '50,000,000' in text
+    assert 'Recordings' in text
 
 
 @pytest.mark.parametrize('fs, span, expected_half', [

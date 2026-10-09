@@ -3,122 +3,207 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>VectorRF Lab 1.2 Help</title>
+  <title>VectorRF Lab Help</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2314181b'/%3E%3Cpath d='M2 11h2l2-7 2 9 2-6 2 4h2' fill='none' stroke='%23e9b04b' stroke-width='1.6' stroke-linejoin='round'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/assets/styles.css" />
 </head>
 <body class="help-body">
   <header class="help-topbar">
-    <div><strong>VectorRF Lab 1.2</strong><span>Product help</span></div>
-    <a class="help-link" href="/">Back to lab</a>
+    <div><strong>VectorRF Lab</strong><span>User guide</span></div>
+    <a class="help-link" href="/">Back to the lab</a>
   </header>
   <main class="help-shell">
-    <aside class="help-nav" aria-label="Help topics">
-      <a href="#quick-start">Quick start</a>
+    <nav class="help-nav" aria-label="Help topics">
+      <a href="#start">Getting started</a>
+      <a href="#interface">Working with the interface</a>
+      <a href="#transmitter">Transmitter</a>
+      <a href="#composite">Composite signals</a>
+      <a href="#agility">Hopping and sweeps</a>
+      <a href="#export">Exporting I/Q</a>
+      <a href="#recordings">Recordings</a>
       <a href="#spectrum">Spectrum analyzer</a>
-      <a href="#zero-span">Zero span</a>
-      <a href="#power">Absolute dBm power</a>
-      <a href="#frames">TX/RX framing</a>
+      <a href="#markers">Markers and measurements</a>
+      <a href="#zero-span">Zero span and quality</a>
       <a href="#receiver">Receiver</a>
-      <a href="#quality">Modulation quality</a>
       <a href="#classifier">Classifier</a>
       <a href="#radar">Radar Studio</a>
+      <a href="#power">Power and units</a>
+      <a href="#wideband">Wideband operation</a>
       <a href="#performance">Performance</a>
-      <a href="#validation">Limits & validation</a>
       <a href="#troubleshooting">Troubleshooting</a>
-    </aside>
+    </nav>
     <article class="help-content">
-      <section id="quick-start">
+      <section id="start">
         <p class="help-kicker">USER GUIDE</p>
         <h1>VectorRF Lab</h1>
-        <p>VectorRF Lab is a local, browser-based baseband DSP laboratory. The transmitter, spectrum analyzer, receiver, frame tools, classifier and radar workspace operate on simulated complex samples rather than a hardware RF front end.</p>
-        <div class="help-callout"><strong>Fast path:</strong> choose a waveform in <b>Transmitter</b>, set sample rate and power, then open <b>Spectrum</b> or <b>Receiver</b>. Most edits apply when a field loses focus or you press Enter.</div>
-        <h2>What the status bar means</h2>
-        <p><b>SOURCE</b> identifies the active simulation path, <b>FS</b> is the current sample rate, <b>UPDATE</b> is the observed browser display rate, and the right side reports current state or validation errors. A display rate below its target means the requested experiment is taking longer than one frame budget.</p>
+        <p>VectorRF Lab is a local, browser-based RF and DSP laboratory. Every instrument works on complex-baseband samples, either simulated by the <b>Transmitter</b> or read from an I/Q <b>Recording</b>. There is no hardware RF front end.</p>
+        <div class="help-callout"><strong>Fast path:</strong> the <b>Transmitter</b> starts with a 50 kBd QPSK carrying a PN15 sequence (or open a file in <b>Recordings</b>): look at it in <b>Spectrum</b>, demodulate it in <b>Receiver</b>, or ask the <b>Classifier</b> what it is. <b>Radar Studio</b> is a separate simulation with its own waveform engine.</div>
+        <h2>Captures</h2>
+        <p>Instruments observe numbered <b>captures</b>. Transmitter capture <i>k</i> starts at absolute sample <i>k·N</i> (N samples per capture), so consecutive captures join without gaps: carrier phase, hop schedules, bursts and analog messages continue across them. Every observer naming the same capture sees identical samples.</p>
+        <h3>Pacing</h3>
+        <p>The <b>Pacing</b> switch in each Source section decides how the transmitter stream advances. <b>Real time</b> (default) follows the wall clock: every update shows the capture at the current time and skips whatever could not be processed, like an SDR dropping buffers, so hops and bursts appear at their true rate at any sample rate. <b>Every sample</b> processes each capture in order, so a processing chain's filter memory and loop state are physically continuous; simulated time then runs slower than real time when processing cannot keep up. A receiver or processing chain never sees the same capture twice. Recordings follow their own playback settings.</p>
+      </section>
+
+      <section id="interface">
+        <h2>Working with the interface</h2>
+        <p>Each workspace has a control dock on the left and its displays on the right. The status bar shows the live source, its sample rate, the achieved display rate and the latest message; validation errors appear there and in a banner, and the display keeps the last valid capture.</p>
+        <h3>Typing values</h3>
+        <p>Numeric fields accept instrument notation: <code>2.4G</code>, <code>2.4 GHz</code>, <code>100k</code>, <code>20us</code>, <code>1e6</code> or <code>−3 dBm</code>. <code>m</code> is milli and <code>M</code> mega, except in frequency, sample-rate and symbol-rate fields, where prefixes work as typed: <code>10mhz</code> is 10 MHz and <code>2.4ghz</code> is 2.4 GHz. Press <kbd>Enter</kbd> or leave the field to apply; <kbd>↑</kbd>/<kbd>↓</kbd> step the value (<kbd>Shift</kbd> × 10). Values outside a field’s limits are clamped and the limit is shown.</p>
+        <p>Where a source has an RF centre, frequency fields show <b>absolute</b> frequencies: type <code>920M</code> and the baseband offset from the centre is stored.</p>
+        <p>A value the field cannot take — a frequency beyond the sampled band, for example — is not applied: the field turns red with the allowed range (and, for a frequency, the sample rate that would hold it) and a notice appears. The steppers and arrow keys move a frequency in steps of a hundredth of the sample rate's decade, so a carrier at 0 Hz moves visibly.</p>
+        <h3>Help in context</h3>
+        <p>Labels with a dotted underline explain themselves when you hover over them. Sections collapse and remember their state.</p>
+      </section>
+
+      <section id="transmitter">
+        <h2>Transmitter</h2>
+        <p>Choose a waveform: tones, multitone, noise, chirps and custom (expression, control points, I/Q table or a local Python module); PSK/QAM/APSK; FSK/MSK/GMSK; OFDM with an editable resource grid; analog AM/FM/PM/SSB/DSB-SC. Tabs separate the signal, its data and framing, OFDM shaping, hopping/sweep and burst gating.</p>
+        <p>The dock sets the clock (sample rate and capture length, bounded in samples), the <b>RF centre</b>, power, frequency offset, phase and transmitter impairments (AWGN, I/Q imbalance, DC). The right-hand column shows the live output, the nominal band plan and the hop/sweep schedule.</p>
+        <h3>RF centre</h3>
+        <p>The RF centre is the frequency complex-baseband 0 Hz represents. It labels instrument axes, travels into SigMF exports as the capture frequency, and lets every frequency field be entered as an absolute value. With 0 Hz the lab works in plain baseband.</p>
+      </section>
+
+      <section id="composite">
+        <h2>Composite signals</h2>
+        <p>Switch the Transmitter to <b>Composite</b> to sum up to 16 independently designed signals, for example a CW tone at 0 Hz and a 10 MHz-wide QPSK carrier at +20 MHz. Each component is a complete transmitter design with its own waveform, data, absolute power, frequency, phase, burst gating and hopping; the composite adds a common offset, hopping, burst and impairments on top.</p>
+        <p>Each component’s on-power is calibrated to its own dBm setting: a −10 dBm tone reads −10 dBm and a −20 dBm QPSK integrates to −20 dBm in a channel-power window. Independent components add in power; identical deterministic ones (a duplicated tone at the same frequency) add as amplitudes, +6 dB, and the total power shown accounts for it. Components get their own noise and PN data. <b>Duplicate</b> places the copy at a free frequency, so it never hides on top of its original. The scale is fixed by the design rather than measured per capture, so bursts and hops never step the sample level between captures.</p>
+        <p>The band plan draws each component’s nominal occupied band at its power, with hop/sweep ranges hatched; red dashed lines are Nyquist. A warning appears when any component would alias.</p>
+      </section>
+
+      <section id="agility">
+        <h2>Hopping and sweeps</h2>
+        <p>Any signal, including a composite and each of its components, can hop or sweep. <b>Frequency hopping</b> visits a linear grid (start → stop in steps), an explicit list, or a seeded pseudo-random permutation of the grid; <b>linear sweep</b> chirps start → stop as a sawtooth or triangle. Dwell (or sweep time), off-time, raised-cosine edge ramps and a start delay complete the schedule.</p>
+        <div class="help-callout"><strong>Example:</strong> QPSK hopping from 900 MHz to 1 GHz in 100 kHz steps with 100 µs dwell and 20 µs off-time: set the RF centre to 950 MHz and the sample rate above the 100 MHz span (125 MS/s), enable hopping, and type <code>900M</code>, <code>1G</code>, <code>100k</code>, <code>100u</code>, <code>20u</code>. That is 1001 hops with a 120.1 ms period; <code>examples/designs/fhss-qpsk-900m.json</code> holds the design.</div>
+        <h3>Exact phase</h3>
+        <p>The schedule is a 64-bit direct digital synthesizer: every frequency is a tuning word and the phase is an integer accumulator, so the phase of any absolute sample is exact at any rate and after any simulated time, and captures join seamlessly. <b>Continuous</b> phase integrates frequency through every hop (no phase steps, like a VCO). <b>Coherent</b> phase gives each hop the phase its own oscillator would have had since t = 0 (like switched coherent synthesizers). Sweeps are always continuous.</p>
+        <p>Off-times gate the signal off; transmitter AWGN continues, so the noise floor stays visible. Power reads the configured value while a hop is on. Combining frequencies (component offset + component hop + composite offset + composite hop) must stay within ±Fs/2.</p>
+      </section>
+
+      <section id="export">
+        <h2>Exporting I/Q</h2>
+        <p>The last design the server accepted is restored when the page reopens. <b>Export I/Q file</b> writes the capture the instruments are showing (same seed and start sample), or a longer contiguous record when a duration is set, as SigMF (recommended: keeps rate, RF centre, the power calibration and the design that made it), WAV/RF64 or raw interleaved ci16/cf32/ci8/cu8/cf64. Integer formats are peak-normalized with headroom or written at unity scale; clipped samples are reported. Exports can be downloaded or saved into the recording library.</p>
+      </section>
+
+      <section id="recordings">
+        <h2>Recordings</h2>
+        <p>The library lists I/Q files from SDR tools; drop files anywhere on the page or choose them. Uploads stream to disk and files are memory-mapped, so multi-gigabyte wideband captures open instantly. Requests name files inside the library folder only (<code>VECTORRF_CAPTURES_DIR</code>).</p>
+        <table class="help-table">
+          <thead><tr><th>Container</th><th>What is read</th></tr></thead>
+          <tbody>
+            <tr><td>Raw <code>.iq .bin .dat .raw .cf32 .cfile .cs16 .cs8 .cu8</code></td><td>Interleaved cf32, cf64, ci32, ci24, ci16, ci8, cu8 (RTL-SDR), little/big-endian, or real-valued. Raw files store no rate or format.</td></tr>
+            <tr><td>WAV / RF64</td><td>2-channel I/Q or mono real PCM 8/16/24/32-bit or float 32/64, including RF64 beyond 4 GiB; the SDR# <code>auxi</code> chunk supplies the centre frequency.</td></tr>
+            <tr><td>SigMF</td><td><code>.sigmf-meta</code> + <code>.sigmf-data</code> pairs and <code>.sigmf</code> archives: datatype, rate, centre, timestamps, annotations.</td></tr>
+          </tbody>
+        </table>
+        <h3>Overview and playback</h3>
+        <p>Selecting a file shows its key properties, a transport bar and a whole-file spectrogram (time downwards) with an aligned power strip and the average spectrum. <b>Click</b> the spectrogram to seek; <b>drag</b> vertically to mark a time region for export. <b>Use as live source</b> sends the recording to Spectrum, Receiver and Classifier. Contiguous playback advances by one window per frame (every sample, usually slower than real time); real time skips samples; custom uses your step. The overview samples the file at evenly spaced segments and states the examined fraction.</p>
+        <h3>Interpretation</h3>
+        <p>Headerless files are ranked by content heuristics; a warning appears when the chosen format contradicts the content, and clicking a candidate applies it. Rate and centre are parsed from gqrx/SDR# file names when possible. Levels read in dBFS (a full-scale complex tone is 0 dBFS); enter an offset for absolute dBm, or restore the calibration stored in a lab export.</p>
       </section>
 
       <section id="spectrum">
         <h2>Spectrum analyzer</h2>
-        <p>The communications spectrum is always centered at baseband DC; there is no analyzer center-frequency control. <b>Baseband span</b> controls the horizontal display span and is limited to 10 MHz.</p>
-        <p>The requested span and the source sample rate are intentionally separate. A 10 MHz display span always shows approximately −5 MHz to +5 MHz. If the source is only 1 MS/s, valid sampled spectrum exists only inside approximately −500 kHz to +500 kHz; the remainder is marked <b>OUTSIDE SOURCE NYQUIST</b>. Increase transmitter sample rate when you need real spectrum data across the wider span.</p>
-        <h3>Resolution and speed</h3>
-        <p>Requested RBW, FFT window and averaging determine FFT cost. Narrow RBW at a high sample rate requires a larger transform. The live path limits display points while preserving bucket peaks so a wide 10 MHz view does not need to draw every FFT bin.</p>
-        <h3>Markers and zoom</h3>
-        <p>Up to eight markers can be active. Use peak, next-peak, DC, delta-to-M1 and DC↔peak actions for common measurements. Mouse-wheel zoom is centered on the pointer; the pan controls move the view without retuning acquisition. Double-click restores the full requested span. Markers remain constrained to sampled data, so they cannot report a fabricated value outside source Nyquist.</p>
-        <h3>Trace memory</h3>
-        <p>Trace 1 is the live write trace by default. Additional max/min/average traces are off until enabled to keep the default rendering path fast. Capture memory stores frequency coordinates together with trace values, allowing comparisons after later configuration changes.</p>
+        <p>Set <b>centre and span</b> (or start and stop) like a swept analyzer. Spans up to a quarter of the sample rate are <b>digitally down-converted</b>: the analyzer mixes the centre to DC and decimates through Kaiser stages with ≥ 110 dB alias rejection, so a narrow span reaches the RBW the capture length allows instead of the FFT-size limit: at 100 MS/s with a 131,072-point FFT limit the full band bottoms out at 1.1 kHz RBW, while a 400 kHz span is decimated by 128 and reaches 143 Hz from the same 2-million-sample capture. The readout shows the decimation and analysis rate. A span wider than the source rate keeps its axis and shades the region beyond ±Fs/2, labelled <b>OUTSIDE SOURCE NYQUIST</b>.</p>
+        <h3>Mouse and keyboard</h3>
+        <table class="help-table">
+          <tbody>
+            <tr><td>Click</td><td>Place the active marker (Ctrl/⌘-click adds a marker)</td></tr>
+            <tr><td>Drag on the trace</td><td>Select a band, then Zoom, Channel power, Classify or Receive it</td></tr>
+            <tr><td>Drag a marker / channel band</td><td>Move it; drag a band edge to resize</td></tr>
+            <tr><td>Wheel</td><td>Zoom around the pointer (Shift + wheel pans)</td></tr>
+            <tr><td>Right- or middle-drag, Alt-drag</td><td>Pan</td></tr>
+            <tr><td>Double-click</td><td>Full span</td></tr>
+            <tr><td>Keys (click the trace first)</td><td><kbd>P</kbd> peak · <kbd>N</kbd> next lower peak · <kbd>[</kbd>/<kbd>]</kbd> nearest peak left/right · <kbd>←</kbd>/<kbd>→</kbd> step marker · <kbd>M</kbd> new marker · <kbd>C</kbd> marker to centre · <kbd>Del</kbd> remove · <kbd>F</kbd> full span · <kbd>Z</kbd> zoom to selection · <kbd>+</kbd>/<kbd>−</kbd> span · <kbd>Esc</kbd> clear selection</td></tr>
+          </tbody>
+        </table>
+        <h3>Resolution, traces and waterfall</h3>
+        <p>Auto RBW keeps RBW at span/500; otherwise type it. RBW is the window’s equivalent noise bandwidth; the window never extends past the captured samples, and when a capture is too short the achieved RBW is reported. Each FFT is zero-padded four times, so a tone reads its level within 0.1 dB and keeps the same shape wherever it falls between bins. The default window is Blackman-Harris (−92 dB sidelobes), close to an analyzer’s Gaussian RBW filter. Four traces can write, hold maxima or minima, average or freeze; memories keep traces for comparison. The waterfall shares the frequency axis, shows the newest row at the top and restarts when you retune.</p>
+      </section>
+
+      <section id="markers">
+        <h2>Markers and measurements</h2>
+        <p>Up to eight markers read frequency and level on any trace. <b>Delta</b> markers read the difference to a reference marker; <b>noise</b> markers read power density (level − 10·log<sub>10</sub>RBW, valid with the average detector). Marker → CF retunes the analyzer; Marker → Ref sets the reference level.</p>
+        <h3>Channel power</h3>
+        <p>Channel-power windows integrate power over a band from the full-resolution spectrum (not the reduced display): calibrated power per bin divided by the window’s equivalent noise bandwidth in bins, with edge bins weighted by their overlap. Each window also reports power density and its 99 % occupied bandwidth. Add one from a selection, then drag or resize it on the trace.</p>
       </section>
 
       <section id="zero-span">
-        <h2>Zero span</h2>
-        <p>Zero span plots time-domain I/Q, envelope, unwrapped phase and instantaneous frequency from one interval of the current source. Frequency is calculated from adjacent complex samples before display reduction, and phase/frequency values around signal nulls are masked because they are undefined there.</p>
-        <p>The live zero-span view is intentionally bounded to a display-sized point set and refreshes independently from the spectrum FFT stream. Use <b>Hold capture</b> when inspecting a transient. Shorter measurement lengths reduce both compute and browser drawing work.</p>
-      </section>
-
-      <section id="power">
-        <h2>Absolute transmitter power</h2>
-        <p><b>Transmit power (dBm)</b> is an absolute simulator calibration and has no artificial UI min/max limit. A coherent bin-centered complex tone reads its configured dBm value at the spectrum peak. Modulated signals have the same configured average total power distributed over their occupied bins, so no single spectral bin is expected to equal total transmit power.</p>
-        <p>This is a simulation calibration, not a hardware output-power claim. It does not model DAC full scale, analog gain compression, antenna gain, cable loss or regulatory transmit limits unless a separate experiment explicitly introduces those effects.</p>
-      </section>
-
-      <section id="frames">
-        <h2>Generic TX and RX frames</h2>
-        <p>The transmitter frame builder can assemble ordered digital blocks with independent modulation, bit count or pattern, symbol rate, relative power and repetition. Supported frame blocks include PSK/QAM/APSK, FSK/MSK/GMSK and OFDM families. Blocks repeat as a complete frame to fill the capture.</p>
-        <p>The receiver framing view uses an expected block plan. It can perform calibrated energy detection, normalized preamble correlation, frame-start selection and per-block decoding. <b>Follow transmitter</b> is useful for loopback experiments; editing the receiver frame plan independently disables that linkage.</p>
-        <div class="help-callout"><strong>Typical lab frame:</strong> BPSK preamble → OFDM header → QPSK payload. Use the preamble for correlation, then inspect each decoded block separately.</div>
+        <h2>Zero span and modulation quality</h2>
+        <p>Zero span and modulation quality follow the live stream: each processed capture updates the view, and the readout bar names that capture. Zero span plots I/Q, envelope, unwrapped phase and instantaneous frequency over an interval of the current capture. With tuning on, the record is mixed to a centre frequency, anti-alias decimated and filtered, like an analyzer’s zero-span RBW filter. Tuning bands must fit inside the source Nyquist interval. The readout shows the achieved bandwidth when a short capture cannot resolve the requested one. If real-time pacing shortens a capture, the interval moves into the available samples and the controls show the actual interval. Phase and frequency are masked at signal nulls.</p>
+        <p>Modulation quality reports decision-directed EVM and MER for linear formats and OFDM with the known transmitter modulation (hopping is removed when the dwells are continuous). Its receiver keeps tracking the carrier from capture to capture and measures the most recent 2,048 symbols (the <b>Record</b> readout), so the constellation fills in and the EVM stays steady even when a capture holds only a few symbols — at 2 GS/s a 50 kBd signal has 40,000 samples per symbol. Signals without symbols show their I/Q trajectory, envelope, instantaneous frequency and phase, with the panes named accordingly.</p>
       </section>
 
       <section id="receiver">
         <h2>Receiver</h2>
-        <p><b>Live monitor</b> shows the actual processed samples without requiring a demodulation assumption. <b>Demodulation</b> adds format-specific recovery. The editable processing chain can insert gain, tuning, filtering, resampling, DC removal, AGC, expressions, synchronization blocks and supported Python extensions.</p>
-        <p>Channel controls add deterministic SNR, carrier/phase/timing offsets, I/Q imbalance, DC and echo effects. For repeatable experiments, capture identity and source seed are carried through the processing path.</p>
-      </section>
-
-      <section id="quality">
-        <h2>Modulation quality</h2>
-        <p>Linear digital and OFDM formats use decision-directed EVM/MER where meaningful. Basic, analog, FSK/MSK and mixed-frame signals instead show direct waveform quality: I/Q trajectory, envelope, phase and instantaneous frequency. The application does not invent an EVM number for a signal type where that metric is not defined.</p>
+        <p><b>Live monitor</b> shows the processed samples; <b>Demodulation</b> recovers symbols and bits; <b>Framing</b> acquires generic frames; <b>Timing</b>, <b>Carrier</b> and <b>Equalizer</b> focus on each loop; the <b>Processing chain</b> inserts gain, frequency shift, FIR and low-pass filters, resampling, DC removal, AGC, expressions, synchronization blocks and Python extensions.</p>
+        <h3>Following the transmitter</h3>
+        <p>The badge in the dock header shows whether the receiver <b>follows the transmitter</b> (modulation, rates, filters, frame plan, tuning) or is <b>manual</b>. Editing a format field switches to manual with a notice; “follow TX” in the badge re-synchronizes. For a composite, choose which component to receive. For hopping or swept signals the receiver removes the known schedule before demodulating, like a synchronized frequency-hopping receiver.</p>
+        <h3>Synchronization</h3>
+        <p>Symbols are normalized to unit RMS before the loops, so loop gains mean the same thing at any signal level and samples per symbol; the Carrier section shows the resulting damping, natural frequency, lock-in range, noise bandwidth and settling time. <b>Coarse CFO</b> acquires carrier offsets up to about ±10 % of the symbol rate: the power spectrum’s centroid arbitrates M-th power estimates, which are precise but ambiguous (and fooled by short repeating payloads); APSK and differential formats get estimators of their own. Without it, the carrier loop alone pulls in offsets of about its lock-in range (shown in the Carrier section) and beyond that the constellation keeps rotating. Mueller &amp; Müller timing is decision-directed, so it runs jointly with the carrier loop and decides on carrier-corrected symbols; Gardner timing is decision-free and is used for the differential formats and OQPSK. Between captures the receiver keeps tracking (also across captures real time skipped) instead of acquiring again. The timing loop gain is in symbols per unit of detector output, so it too behaves the same at any oversampling.</p>
+        <p>Linear modulations are demodulated at no more than 16 samples per symbol: higher oversampling (a 50 kBd signal at 10 MS/s has 200) is first reduced by a ≈100 dB anti-alias polyphase resampler, so the cost follows the number of symbols rather than the sample rate and results do not depend on it.</p>
+        <p>The channel experiment adds SNR, carrier frequency and phase offset, fractional timing delay, a delayed echo and I/Q imperfections; switch it off to analyse a recording as recorded. The <b>Before carrier recovery</b> panes show the symbols with the channel’s phase still on them: with a carrier offset they turn, which is what the loop removes.</p>
+        <h3>Equalizer</h3>
+        <p>The CMA equalizer is a blind, symbol-spaced adaptive filter for PSK; it keeps its taps from capture to capture and converges over a few captures. Its taps are plotted with the channel estimated against the known transmitted symbols (BPSK, QPSK, 8-PSK and QAM transmitters): add an echo in the channel experiment to see both.</p>
       </section>
 
       <section id="classifier">
         <h2>Classifier</h2>
-        <p>The classifier is a blind heuristic observer. Its score indicates agreement with internal rules, not a calibrated probability. CFO, low SNR, burst behavior, mixed frames and uncommon formats can reduce confidence or make different hypotheses look similar.</p>
+        <p>The classifier is a heuristic observer of one emitter. Drag across an emitter in its spectrum and choose <b>Classify this band</b>, or pick a detected emitter (green brackets): the band is mixed to 0 Hz, decimated and low-pass filtered before any feature is measured, and its SNR is measured against the capture’s noise floor.</p>
+        <h3>Why a class</h3>
+        <p>The <b>Decision path</b> lists every rule in order, each feature measured against its threshold with pass or fail, and the stage that decided. <b>Features</b> shows each value against the thresholds the rules use, with definitions. <b>Constellation hypotheses</b> lists the fit EVM of every linear constellation and the fraction of its points the data used: random data visits all points, so a hypothesis that leaves many unused is penalized. Scores are heuristic agreement, not calibrated probabilities.</p>
       </section>
 
       <section id="radar">
         <h2>Radar Studio</h2>
-        <p>Radar Studio is a separate simulation workspace with waveform design, targets, arrays, propagation and processing. It supports arbitrary-waveform delay/Doppler correlation plus structured pulsed and FMCW processing. Truth values and measured estimates are shown separately.</p>
-        <p>Keep designed baseband content below half the configured sample rate to avoid aliasing. Coherent processing requires enough complete intervals for the requested algorithm; timing controls should match the waveform being simulated.</p>
+        <p>Radar Studio simulates point targets, a receive array, propagation and processing from one sample clock: the waveform design, echoes and processing all run at the simulation sample rate (up to 5 GS/s). The transmit waveform can be a pulse sequence, a continuous waveform (CW, FMCW, PMCW, stepped CW), segments, an arbitrary waveform, the Transmitter’s OFDM design, or a recording window.</p>
+        <h3>Waveform designer</h3>
+        <p>The sequence timeline shows items to scale; click an item to edit it. For the selected pulse item the designer reports PRF, duty, bandwidth, pulse-compression ratio, range resolution, blind range, unambiguous range and velocity, and velocity resolution at the RF carrier.</p>
+        <h3>Scene</h3>
+        <p>The scene is a top view with the array at the bottom centre, boresight up and +Y to the left. Range rings, bearings and the live array pattern are drawn; targets show velocity vectors (20 s of motion) and trails. <b>Drag</b> a target to move it, <b>drag its arrow tip</b> to set its velocity, <b>double-click</b> empty space to add one. The gold square is the strongest-cell position estimate; red arcs are detected ranges.</p>
+        <p>Processing offers full-waveform delay/Doppler correlation (any waveform), pulse-Doppler and FMCW processors with MTI clutter cancellation and an editable processing chain.</p>
+        <h3>Detection</h3>
+        <p>Detectors compare each range–Doppler cell with a noise level estimated from training cells on both sides along range, outside guard cells, scaled for the false-alarm probability you set: <b>CA-CFAR</b> averages the training cells (best in uniform noise), <b>GO-CFAR</b> takes the greater side (holds the false-alarm rate at clutter edges), <b>SO-CFAR</b> the smaller side (resolves close targets) and <b>OS-CFAR</b> a chosen rank of the sorted cells (tolerates other targets among the training cells); or set a fixed threshold. A target lifts several cells around its peak; each group of cells above threshold is one detection, listed with its range, velocity and margin above the threshold. Narrowband far-field point targets and a stop-and-hop approximation within a capture are assumed.</p>
+      </section>
+
+      <section id="power">
+        <h2>Power and units</h2>
+        <p>Transmit power is an absolute simulator calibration: it sets the clean signal’s power, with AWGN, DC and I/Q imbalance adding on top. A bin-centred tone reads its configured dBm at the peak; modulated signals spread the same power over their bandwidth (measure it with channel power). Bursts and hops read their configured power while on. Tones read within 0.1 dB at any frequency; the flat-top window is the most accurate for amplitudes. Recordings read dBFS unless calibrated.</p>
+      </section>
+
+      <section id="wideband">
+        <h2>Wideband operation</h2>
+        <p>Sample rates up to 5 GS/s are supported. The engine bounds samples per capture (8,388,608 by default, <code>VECTORRF_MAX_CAPTURE_SAMPLES</code>), so a capture spans less time at higher rates. The live real-time setting uses still shorter windows, advances with wall time and skips samples it cannot process; Every sample processes complete consecutive captures even when simulated time falls behind wall time. All DSP works in samples and symbols with exact integer-sample carrier and DDS phase, so a GS/s experiment reproduces the same experiment at MS/s with frequencies scaled.</p>
       </section>
 
       <section id="performance">
-        <h2>Performance guide</h2>
-        <p>VectorRF Lab uses bounded binary spectrum payloads, backpressure, cached source records, display decimation and request coalescing. The fastest configuration is normally one live trace, moderate averaging and an RBW that does not force an unnecessarily large FFT.</p>
+        <h2>Performance</h2>
         <table class="help-table">
           <thead><tr><th>Symptom</th><th>First adjustment</th></tr></thead>
           <tbody>
-            <tr><td>10 MHz spectrum updates slowly</td><td>Raise RBW, reduce FFT averaging, keep extra traces off, or lower live update target.</td></tr>
-            <tr><td>Zero span feels heavy</td><td>Shorten measurement length; hold the capture while examining details.</td></tr>
-            <tr><td>Receiver display falls behind</td><td>Shorten capture duration or simplify the processing chain.</td></tr>
-            <tr><td>Radar cannot reach target FPS</td><td>Reduce samples/capture, search size, array size or coherent processing load.</td></tr>
+            <tr><td>Wide spectrum updates slowly</td><td>Raise RBW (or keep Auto RBW), lower the FFT size limit, reduce averaging, keep extra traces off.</td></tr>
+            <tr><td>Very narrow RBW is slow</td><td>Expected: the RBW needs that much signal time; shorten the capture or widen RBW.</td></tr>
+            <tr><td>Receiver display falls behind</td><td>Keep Pacing at Real time (captures that cannot be processed are skipped), shorten the capture or simplify the processing chain.</td></tr>
+            <tr><td>Classifier uses CPU</td><td>Lengthen its interval or pause it.</td></tr>
+            <tr><td>Radar cannot reach its update target</td><td>Reduce samples per capture, search size, array size or processing load.</td></tr>
           </tbody>
         </table>
-      </section>
-
-      <section id="validation">
-        <h2>Limits and validation</h2>
-        <p>Invalid edits retain the last successful live result. The spectrum span field clamps typed values to the supported 100 Hz…10 MHz range, so entering 50,000,000 becomes 10,000,000 rather than killing the stream. Direct API clients still receive validation errors for unsupported values.</p>
-        <p>The transmitter sample rate is currently limited to 10 MS/s. Spectrum content above ±Fs/2 is not available from that sampled source. Numeric controls allow arbitrary valid typed values; arrow buttons are only convenience increments.</p>
+        <p>Real-time pacing targets the selected display FPS by shortening live captures and reducing the receiver, processing chain or measurement work when necessary. Actual cadence depends on the machine and the selected analysis; the capture and processed-sample readouts show what was observed. Every sample pacing keeps complete consecutive captures and can update more slowly. Displays pause while the browser tab is hidden and resume when it returns.</p>
       </section>
 
       <section id="troubleshooting">
         <h2>Troubleshooting</h2>
-        <h3>The spectrum axis is wide but the trace only occupies the middle</h3>
-        <p>The requested span is wider than the transmitter sample rate. This is expected and is explicitly shaded. Increase sample rate if you need sampled content across the full span.</p>
-        <h3>A PSK/QAM spectrum appears to jump</h3>
-        <p>Current releases avoid wrapping FFT windows across source-record boundaries. If you still see a change, check burst settings, noise, changing data, detector mode and peak/max-hold traces before treating it as a renderer problem.</p>
-        <h3>The browser says the backend is unavailable</h3>
-        <p>Keep the launch terminal open and verify the local server is listening on the configured port. The default address is <code>http://127.0.0.1:8765</code>. Set <code>VECTORRF_PORT</code> before launch to choose another port.</p>
-        <h3>How do I verify a release?</h3>
-        <p>From the project directory run <code>python -m pytest</code>. The release archive also includes browser smoke tests and release notes. Installed packages can be launched with <code>vectorrf-lab</code>.</p>
+        <h3>A field turns red</h3>
+        <p>The text is not a quantity in that field’s unit (try forms like <code>2.4G</code> or <code>1e6</code>), or the value is outside what the field can take: the message gives the allowed range. A frequency beyond ±Fs/2 needs a higher sample rate.</p>
+        <h3>A design is rejected</h3>
+        <p>The message names the path of the offending setting, for example “components → 1 → center_hz”. Frequencies plus hopping must stay within ±Fs/2.</p>
+        <h3>A recording looks like noise or reads absurd levels</h3>
+        <p>Its sample format is probably wrong: raw files store none. Pick the format the content heuristics suggest or the one your SDR tool documents.</p>
+        <h3>Decoded text is garbled</h3>
+        <p>Check that the receiver follows the transmitter (badge), that coarse CFO is on for large offsets, and the EVM trace for loss of lock; QPSK carrier recovery has a fourfold phase ambiguity without a known preamble.</p>
+        <h3>The engine is unreachable</h3>
+        <p>Keep the launch terminal open; the default address is <code>http://127.0.0.1:8765</code> (<code>VECTORRF_PORT</code> changes it).</p>
+        <h3>Verifying an installation</h3>
+        <p>Run <code>python -m pytest</code> in the project directory, and <code>python tests/ui/ui_smoke.py</code> for the browser test.</p>
       </section>
     </article>
   </main>
