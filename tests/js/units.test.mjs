@@ -1,13 +1,13 @@
 // Unit tests of the browser's pure modules, run with Node (tests/test_js_units.py).
 // A minimal DOM stub lets modules that register document listeners at import load.
 import assert from 'node:assert/strict';
-import {pathToFileURL} from 'node:url';
+import {fileURLToPath, pathToFileURL} from 'node:url';
 import path from 'node:path';
 
 globalThis.document = {addEventListener() {}, documentElement: {}, querySelector: () => null, querySelectorAll: () => []};
 globalThis.getComputedStyle = () => ({getPropertyValue: () => ''});
 
-const web = path.resolve(process.argv[2]);
+const web = path.resolve(process.argv[2] ?? fileURLToPath(new URL('../../backend/vectorrf/web/js', import.meta.url)));
 const load = rel => import(pathToFileURL(path.join(web, rel)).href);
 const {parseQuantity, formatQuantity, fmt, fmtFreq} = await load('core/format.js');
 const {stateAt, setStateAt} = await load('plots/scene.js');

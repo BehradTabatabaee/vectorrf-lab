@@ -27,3 +27,13 @@ def test_programming_guide_has_design_examples():
 def test_documented_designs_validate(design):
     TxConfig.model_validate(design)
 
+
+ROOT = DOCS.parent
+PAGES = sorted([*ROOT.glob("*.md"), *DOCS.glob("*.md"), *(ROOT / ".github").rglob("*.md")])
+LOCAL_LINK = re.compile(r"""(?:\]\(|src=")(?!https?:|mailto:|#)([^)"#\s]+)""")
+
+
+@pytest.mark.parametrize("page", PAGES, ids=lambda p: str(p.relative_to(ROOT)))
+def test_relative_links_resolve(page):
+    missing = [t for t in LOCAL_LINK.findall(page.read_text(encoding="utf-8")) if not (page.parent / t).exists()]
+    assert not missing

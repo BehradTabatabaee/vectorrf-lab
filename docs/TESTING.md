@@ -35,7 +35,7 @@ Every behaviour change in the DSP comes with a test that reproduces the defect a
 `tests/js/units.test.mjs` tests the browser's pure modules (engineering-notation parsing and formatting, request construction) with Node's built-in test runner. `test_js_units.py` runs it when Node is installed:
 
 ```bash
-node --test tests/js/units.test.mjs
+node tests/js/units.test.mjs
 ```
 
 ## End-to-end browser test
