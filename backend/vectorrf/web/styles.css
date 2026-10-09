@@ -233,6 +233,8 @@ summary .tipped{text-decoration:none}
 .table th{position:sticky;top:0;z-index:1;padding:6px 8px;text-align:left;font:600 10px var(--sans);letter-spacing:.6px;text-transform:uppercase;color:var(--dim);background:var(--panel-2);border-bottom:1px solid var(--line-2)}
 .table td{padding:5px 8px;border-bottom:1px solid var(--line);vertical-align:middle}
 .table td.num-cell{font-family:var(--mono);text-align:right;white-space:nowrap}
+.table td.wrap{white-space:normal}
+.table.compact th,.table.compact td{padding:4px 5px}
 .table tr.clickable{cursor:pointer}.table tr.clickable:hover td{background:var(--panel-2)}
 .table tr.selected td{background:var(--sel)}
 .list{display:flex;flex-direction:column;gap:3px}

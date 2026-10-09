@@ -28,6 +28,7 @@ export const usesLive = true;
 export function payload() { return {}; }
 
 const files = () => state.files;
+const fileCount = () => `${files().list.length} ${files().list.length === 1 ? 'file' : 'files'}`;
 const sel = () => state.files.selected;
 const isLive = name => state.source.kind === 'file' && state.source.file?.name === name;
 
@@ -225,7 +226,7 @@ function mainHTML() {
 
 export function render(el) {
   root = el;
-  el.innerHTML = `<div class="instrument"><aside class="dock"><div class="dock-head"><h2>Recordings</h2><span class="badge" id="libCount">${files().list.length} files</span></div><div class="dock-scroll" id="recDock" style="padding-bottom:0"></div></aside><section class="main" id="recMain"></section></div>`;
+  el.innerHTML = `<div class="instrument"><aside class="dock"><div class="dock-head"><h2>Recordings</h2><span class="badge" id="libCount">${fileCount()}</span></div><div class="dock-scroll" id="recDock" style="padding-bottom:0"></div></aside><section class="main" id="recMain"></section></div>`;
   bindControls(el, {onChange, actions});
   bindDrop(el);
   renderDock();
@@ -235,7 +236,7 @@ export function render(el) {
 
 function renderDock() {
   replaceHTML($('#recDock', root), libraryHTML());
-  setText('libCount', `${files().list.length} files`);
+  setText('libCount', fileCount());
   renderUpload();
 }
 
