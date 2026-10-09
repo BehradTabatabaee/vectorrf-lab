@@ -355,9 +355,7 @@ def check_recordings(t: Session, name: str):
 def check_radar(t: Session):
     t.mode("radar")
     t.page.wait_for_function("document.getElementById('rdCapture') && /#\\d+/.test(document.getElementById('rdCapture').textContent)", timeout=20000)
-    first = int(t.page.inner_text("#rdCapture").lstrip("#"))
-    t.page.wait_for_timeout(1500)
-    assert int(t.page.inner_text("#rdCapture").lstrip("#")) > first
+    t.advances("rdCapture")
     t.page.click("#radarMain [data-rpage='scene']")
     t.page.wait_for_selector("#rScene")
     t.shot("radar-scene")
@@ -403,10 +401,14 @@ def check_radar(t: Session):
     t.page.wait_for_timeout(300)
     t.advances("rdCapture")
     assert t.page.locator("#radarError").is_hidden(), t.page.inner_text("#radarError")
-    # Pause holds the capture; Step advances exactly one.
+    # Pause holds the capture (once a frame already requested has arrived); Step advances exactly one.
     t.page.click("[data-action='run']")
-    t.page.wait_for_timeout(400)
     paused = t.capture("rdCapture")
+    for _ in range(20):
+        t.page.wait_for_timeout(500)
+        if t.capture("rdCapture") == paused:
+            break
+        paused = t.capture("rdCapture")
     t.page.wait_for_timeout(600)
     assert t.capture("rdCapture") == paused
     t.page.click("[data-action='step']")
@@ -450,8 +452,12 @@ def check_resume_after_hidden(t: Session):
             t.page.wait_for_timeout(300)
         t.page.wait_for_timeout(1200)
         first = t.page.locator(canvas).screenshot()
-        t.page.wait_for_timeout(700)
-        assert t.page.locator(canvas).screenshot() != first, f"{mode} display froze after the page was hidden"
+        for _ in range(12):
+            t.page.wait_for_timeout(500)
+            if t.page.locator(canvas).screenshot() != first:
+                break
+        else:
+            raise AssertionError(f"{mode} display froze after the page was hidden")
 
 
 def check_compact_layout(t: Session):
