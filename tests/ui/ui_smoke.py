@@ -199,7 +199,16 @@ def check_transmitter(t: Session):
     t.page.click("#txMain [data-txpage='agility']")
     t.page.check("[data-bind='tx.agility.enabled']")
     t.fill("tx.agility.start_hz", "900M")
-    t.fill("tx.agility.stop_hz", "1G")
+    # Text being typed survives a re-render answering an earlier edit: commit
+    # another field while "1G" is typed but not yet entered.
+    stop = t.page.locator("[data-bind='tx.agility.stop_hz']")
+    stop.fill("1G")
+    t.page.evaluate("""() => { const start = document.querySelector("[data-bind='tx.agility.start_hz']");
+                               start.value = '901M'; start.dispatchEvent(new Event('change', {bubbles: true})); }""")
+    t.wait_for("s.txApplied.agility.start_hz === -49e6")
+    assert stop.input_value() == "1G", stop.input_value()
+    stop.press("Enter")
+    t.fill("tx.agility.start_hz", "900M")
     t.fill("tx.agility.step_hz", "100k")
     t.wait_for("s.txUi.plan && s.txUi.plan.agility && s.txUi.plan.agility.segments === 1001", timeout=20000)
     t.fill("tx.agility.start_hz", "920M")

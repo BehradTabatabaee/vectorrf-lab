@@ -28,6 +28,9 @@ export function replaceHTML(el, html) {
   if (el.dataset.keepScroll) scrolls.push([el.dataset.keepScroll, el.scrollTop, el.scrollLeft, true]);
   const active = document.activeElement;
   const focusKey = active && el.contains(active) ? (active.dataset.bind || active.id || null) : null;
+  // Text being typed into the focused field when a re-render arrives (a plan
+  // answering the previous edit, say) is kept rather than replaced.
+  const draft = focusKey && active.dataset.draft ? [active.value, active.selectionStart, active.selectionEnd] : null;
   el.innerHTML = html;
   for (const [key, top, left, self] of scrolls) {
     const node = self ? el : $(`[data-keep-scroll="${CSS.escape(key)}"]`, el);
@@ -35,7 +38,14 @@ export function replaceHTML(el, html) {
   }
   if (focusKey) {
     const target = $(`[data-bind="${CSS.escape(focusKey)}"]`, el) || document.getElementById(focusKey);
-    if (target && target.tagName !== 'BUTTON') target.focus({preventScroll: true});
+    if (target && target.tagName !== 'BUTTON') {
+      if (draft && 'value' in target) {
+        target.value = draft[0];
+        target.dataset.draft = '1';
+      }
+      target.focus({preventScroll: true});
+      if (draft && draft[1] != null) try { target.setSelectionRange(draft[1], draft[2]); } catch { /* not a text field */ }
+    }
   }
 }
 

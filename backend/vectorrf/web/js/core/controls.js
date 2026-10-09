@@ -247,6 +247,7 @@ export function bindControls(root, {onChange, actions = {}} = {}) {
     }
     const input = event.target.closest('[data-bind]');
     if (!input || !root.contains(input) || input.dataset.kind === 'range') return;
+    delete input.dataset.draft;
     const result = readControl(input);
     setFieldError(input, result.ok ? '' : result.message);
     if (result.ok) apply(root, input, result.value);
@@ -255,6 +256,8 @@ export function bindControls(root, {onChange, actions = {}} = {}) {
   root.addEventListener('input', event => {
     const input = event.target;
     if (input.dataset?.kind === 'range') apply(root, input, Number(input.value));
+    // Typed but not yet committed: a re-render keeps it (see dom.replaceHTML).
+    else if (input.dataset?.bind && (input.tagName === 'TEXTAREA' || (input.tagName === 'INPUT' && !['checkbox', 'radio'].includes(input.type)))) input.dataset.draft = '1';
   });
   root.addEventListener('keydown', event => {
     const input = event.target;
