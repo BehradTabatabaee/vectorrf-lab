@@ -74,14 +74,26 @@ jobs:
               else:
                   raise RuntimeError("packaged app did not start within 15 seconds")
 
-              for path in ("/", "/help", "/assets/app.js", "/assets/styles.css", "/api/health", "/api/catalog"):
+              import pathlib
+              import vectorrf
+              web = pathlib.Path(vectorrf.__file__).parent / "web"
+              modules = sorted("/assets/" + p.relative_to(web).as_posix() for p in web.rglob("*.js"))
+              assert len(modules) > 25, modules
+              for path in ("/", "/help", "/assets/styles.css", *modules, "/api/health", "/api/catalog", "/api/defaults"):
                   with urlopen(base + path, timeout=5) as response:
                       body = response.read()
                       assert response.status == 200, (path, response.status, body[:200])
+                      if path.endswith(".js"):
+                          # Browsers refuse ES modules served with a non-JavaScript MIME type.
+                          assert "javascript" in response.headers["content-type"], (path, response.headers["content-type"])
+                      if not path.startswith("/api/"):
+                          # An upgrade must never mix modules of two releases.
+                          assert response.headers.get("cache-control") == "no-cache", (path, response.headers.get("cache-control"))
 
               with urlopen(base + "/api/health", timeout=5) as response:
                   health = json.load(response)
-              assert health["version"] == "1.2.0", health
+              from vectorrf import __version__
+              assert health["version"] == __version__, health
               print("wheel smoke test passed")
           finally:
               proc.terminate()
@@ -102,8 +114,8 @@ jobs:
           python-version: "3.13"
           cache: pip
       - name: Install application and Playwright
-        run: python -m pip install -e '.[ui-test]'
+        run: python -m pip install -e '.[dev,ui-test]'
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
-      - name: Run deterministic UI smoke test
+      - name: Run the end-to-end browser test
         run: python tests/ui/ui_smoke.py

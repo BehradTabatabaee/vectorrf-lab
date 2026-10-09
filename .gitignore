@@ -27,9 +27,9 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Node (optional browser smoke test)
-node_modules/
-
 # Local test / runtime artifacts
 *.log
 coverage.xml
+
+# Local recording library (VECTORRF_CAPTURES_DIR default for source checkouts)
+captures/

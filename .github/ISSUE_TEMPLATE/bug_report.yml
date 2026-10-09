@@ -25,7 +25,7 @@ body:
     id: steps
     attributes:
       label: Reproduction steps
-      description: Include the smallest signal/receiver/radar configuration that reproduces the problem.
+      description: Include the smallest signal/receiver/radar configuration that reproduces the problem. A short SigMF export (Transmitter → Export I/Q file) embeds the transmitter design and reproduces a signal exactly.
     validations:
       required: true
   - type: textarea

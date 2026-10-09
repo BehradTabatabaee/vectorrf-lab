@@ -16,4 +16,8 @@ Please include the affected version, impact, prerequisites, and a minimal privat
 
 VectorRF Lab is designed as a local laboratory application. The default launch scripts and `vectorrf-lab` command bind to `127.0.0.1`. The application does not provide authentication or TLS; do not expose it directly to an untrusted network without adding your own access controls and transport security.
 
+The live WebSocket (`/ws/live`) refuses connections whose `Origin` is not the server's own, so a web page from another site cannot drive a local server through the browser. Waveform expressions are parsed into a syntax tree and evaluated with arithmetic, comparisons and a fixed list of NumPy functions only, with bounded size, exponents and values; they never reach Python's `eval`.
+
 The waveform/processing extension hooks execute local Python modules. Only install or load extensions you trust. Treat repository files and extension modules as executable code.
+
+The recording API reads, writes and deletes files only inside the capture library folder (`VECTORRF_CAPTURES_DIR`) and selects them by plain file name; names with directories, hidden files or unsupported extensions are rejected. Uploads are size-limited (`VECTORRF_MAX_UPLOAD_GB`). Anyone who can reach the server can upload into and delete from that folder, which is another reason not to expose it to untrusted networks.
