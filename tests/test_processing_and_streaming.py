@@ -62,22 +62,34 @@ def test_radar_processing_requires_coherent_intervals():
 
 
 def test_acknowledged_stream_accepts_processing_changes_between_frames():
+    """An edit reaches every product computed after it arrives.
+
+    The server keeps up to MAX_IN_FLIGHT frames unacknowledged, so products
+    started before the edit arrived still answer the previous revision; each
+    product names the client revision it answers.
+    """
     from fastapi.testclient import TestClient
     from vectorrf.app import app
     import json
     with TestClient(app).websocket_connect('/ws/live') as ws:
         ws.receive_json()
         ws.send_json({'action':'start','tx':{'duration':.002},'fps':30,'acknowledge_frames':True,'pipeline':{'blocks':[]}})
-        seen=[]
-        for capture in range(3):
-            while True:
-                m=ws.receive()
-                if not m.get('text'):continue
-                d=json.loads(m['text'])
-                if d['type']=='pipeline':seen.append(d)
-                if d['type']=='frame_end':
-                    if capture==0:ws.send_json({'action':'update','tx':{'duration':.002},'pipeline':{'blocks':[{'kind':'gain','gain_db':-6}]}})
-                    ws.send_json({'action':'ack','seq':d['seq']});break
-        assert not seen[0]['stages']
-        assert seen[1]['stages'][0]['kind']=='gain'
-        assert seen[2]['capture_id']>seen[1]['capture_id']
+        seen,updated=[],False
+        for _ in range(500):
+            m=ws.receive()
+            if not m.get('text'):continue
+            d=json.loads(m['text'])
+            if d['type']=='pipeline':seen.append(d)
+            if d['type']=='frame_end':
+                if not updated:
+                    ws.send_json({'action':'update','client_revision':1,'tx':{'duration':.002},'pipeline':{'blocks':[{'kind':'gain','gain_db':-6}]}})
+                    updated=True
+                ws.send_json({'action':'ack','seq':d['seq']})
+            if sum(x['client_revision']==1 for x in seen)>=2:break
+    before=[d for d in seen if d['client_revision']==0]
+    after=[d for d in seen if d['client_revision']==1]
+    assert before and all(not d['stages'] for d in before)
+    assert len(after)==2 and all(d['stages'][0]['kind']=='gain' for d in after)
+    assert seen.index(after[0])==len(before)                     # revisions never interleave
+    ids=[d['capture_id'] for d in seen]
+    assert all(b>a for a,b in zip(ids,ids[1:])),ids
