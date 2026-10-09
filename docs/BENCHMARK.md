@@ -1,27 +1,54 @@
-# Benchmark — 0.7
+# Benchmarks
 
-Same environment, same 60,000-sample OFDM settings and 8,192-sample radar scene, one warm-up and median of nine runs. Python 3.12/Linux x86-64; BLAS thread count 1. The v0.6 baseline was measured from the previously delivered extracted archive; these are local timings, not a hardware guarantee.
+Local timings on one desktop, to show where the time goes and what the live views achieve; they are not hardware guarantees. Environment: Windows 10, Python 3.10.6, NumPy 2.2.6, SciPy 1.15.3, a 16-thread AMD desktop CPU, `OPENBLAS_NUM_THREADS=1` (FFTs use `scipy.fft` worker threads).
 
-| Operation | v0.6 ms | v0.7 ms | Speedup |
+## DSP workloads
+
+`python examples/benchmark.py`: median of 3 runs after one warm-up, milliseconds, excluding HTTP, JSON and the browser.
+
+| Source | Samples | Generate | Spectrum frame | Receiver (QPSK) | Classifier |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1 MS/s, 50 kBd | 60,000 | 4.4 | 12.8 | 19.1 | 178 |
+| 5 MS/s, 50 kBd | 300,000 | 8.3 | 27.4 | 25.1 | 136 |
+| 2 GS/s, 200 MBd | 2,000,000 | 51 | 28.4 | 35.6 | 284 |
+
+The spectrum frames use a 1/20,000-of-the-rate RBW with a Blackman-Harris window, zero-padded four times. The receiver decimates to 16 samples per symbol before anything else and analyses at most 8,192 symbols, so its cost follows the number of symbols rather than the sample rate.
+
+Spectrum frames at 2 GS/s (two averaged segments; 16-QAM at 200 MBd):
+
+| Window | RBW | Frame |
+| ---: | ---: | ---: |
+| 32,768 | 91.6 kHz | 15 ms |
+| 131,072 | 22.9 kHz | 25 ms |
+| 524,288 | 5.7 kHz | 53 ms |
+| 1,048,576 | 2.9 kHz | 146 ms |
+
+Other workloads:
+
+| Workload | Samples | Time | Throughput |
 | --- | ---: | ---: | ---: |
-| OFDM generation, 60,000 samples | 101.130 | 13.119 | 7.7× |
-| OFDM reception, 60,000 samples | 281.714 | 51.187 | 5.5× |
-| Waveform/array radar, 8,192 samples | 108.862 | 34.194 | 3.2× |
-| Reduce 32,768 spectrum bins | 8.235 | 0.812 | 10.1× |
+| Recording window, cf32 / ci16 / cu8 (memory-mapped) | 2,097,152 | 22 / 19 / 24 ms | 95 / 111 / 89 MS/s |
+| Hop oscillator (1001-hop grid, off-time and ramps, 125 MS/s) | 8,388,608 | 491 ms | 17.1 MS/s |
+| Sweep oscillator (sawtooth, 125 MS/s) | 8,388,608 | 876 ms | 9.6 MS/s |
+| Composite: tone + 7.5 MBd QPSK at 60 MS/s, 20 ms | 1,200,000 | 89 ms | 13 MS/s |
+| Zoom-FFT frame, 1 MHz span at 60 MS/s, 200 Hz RBW | 1,200,000 | 48 ms | — |
+| Array radar experiment (default scene: 8 elements, correlation) | 4,096 | 15 ms | — |
 
-These measurements cover DSP, excluding HTTP/JSON/browser rendering. Browser results are recorded in BUILD_REPORT.md. The new default communications capture is 20 ms, configurable up to 200 ms in the UI; the table deliberately retains the longer old capture for comparison. Complex arrays, large captures, Python extensions and adaptive processing can lower the achieved display rate.
+The hop and sweep oscillators are evaluated in closed form for any absolute sample, so their cost does not grow with simulated time.
 
-The historical v0.7 engine targeted 20 spectrum updates/s and 12 radar updates/s. Current releases target 30 Hz for communications and radar live displays, with frame acknowledgment or a single request in flight. Faster scheduling alone is not proof of faster measurements; numerical data and actual capture IDs are tested separately.
+## Live update rates
 
-## 1.2 spectrum / zero-span release sanity
+Updates per second in a browser (headless Microsoft Edge at 1440 × 900, 1.5× device scale) with the UI defaults — a 50 kBd QPSK carrying PN15 at 40 dB SNR, the receiver channel at 25 dB SNR with a 300 Hz offset, real-time pacing — over 5 s after the view settled, with the payload per update and the browser main thread's busy time:
 
-Release-validation environment: Linux x86-64, Python 3.13, BLAS thread count 1. QPSK capture duration 20 ms, requested spectrum span 10 MHz, RBW 2 kHz, two FFT averages, `max_fft=32768`. Figures are local medians and are not hardware guarantees.
+| Sample rate | Demodulation | Live monitor | Spectrum | Zero span | Modulation quality |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 MS/s | 29 | 30 | 30 | 30 | 29 |
+| 10 MS/s | 29 | 30 | 30 | 30 | 28 |
+| 100 MS/s | 30 | 30 | 30 | 30 | 28 |
+| 2 GS/s | 5 | 30 | 30 | 30 | 11 |
 
-| Source rate | Source regeneration* | Spectrum frame median | Spectrum frame p95 | Live display points | Zero-span median | Zero-span points |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 MS/s | 2.92 ms | 0.205 ms | 0.396 ms | 1,024 | 0.247 ms | 900 |
-| 10 MS/s | 21.32 ms | 0.684 ms | 1.046 ms | 2,048 | 0.729 ms | 900 |
+Payloads: spectrum 1 kB (the frequency axis is sent once), zero span 52–57 kB, modulation quality 65 kB, live monitor 80 kB, demodulation 130–260 kB. The main thread stays below 25 % busy.
 
-\*Source regeneration occurs when transmitter configuration changes; steady live spectrum frames reuse the source record.
+At 2 GS/s a 50 kBd signal has 40,000 samples per symbol: a real-time capture of 524,288 samples holds 13 symbols, fewer than the matched filters' transient. Views that demodulate symbols therefore ask for captures of 2.6 M samples (the transient plus 32 symbols); generating and decimating them sets their update rate, and real-time pacing drops everything in between. Modulation quality keeps tracking across those captures and measures the most recent 2,048 symbols. A higher symbol rate brings every view back to 30 updates/s.
 
-The 1.2 browser path additionally renders only the traces the user enabled. Trace 1 is live by default and the three hold/average traces start disabled. The communications live target remains 30 Hz; zero span targets 12 Hz and modulation quality 4 Hz. Achieved rates depend on browser, CPU, FFT settings and the rest of the active processing chain.
+Nothing processes a multi-GS/s stream in real time: each update analyses one bounded capture, and real-time pacing drops the rest, like an SDR dropping buffers. Achieved rates depend on the CPU, browser, FFT settings, sample rate, capture size and processing chain.
