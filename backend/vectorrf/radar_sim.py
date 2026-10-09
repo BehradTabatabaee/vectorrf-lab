@@ -93,7 +93,7 @@ class RadarExperiment(BaseModel):
     doppler_bins:int=Field(default=41,ge=9,le=81)
     cfar_guard:int=Field(default=3,ge=1,le=20)
     cfar_train:int=Field(default=12,ge=2,le=64)
-    cfar_pfa:float=Field(default=.001,gt=0,lt=.5)
+    cfar_pfa:float=Field(default=1e-6,gt=0,lt=.5)
     seed:int=7
     @model_validator(mode='after')
     def validate_experiment(self):
