@@ -210,11 +210,10 @@ class _Flow:
             while True:
                 seq, capture_id, revision, task = await self.queue.get()
                 try:
+                    # Only computing the product can fail as a product; a failed
+                    # send (the browser went away) ends the sender below.
                     try:
-                        await self.send(await task)
-                        if self.product_fault == revision:
-                            self.product_fault = None
-                            await self.send({'type': 'product_recovered', 'client_revision': revision})
+                        message = await task
                     except Exception as exc:
                         self.product_retry_at = time.monotonic() + PRODUCT_RETRY_S
                         if self.product_fault != revision:
@@ -225,6 +224,11 @@ class _Flow:
                                 log.exception("Live product failed")
                             await self.send({'type': 'error', 'message': str(exc)[:500], 'scope': 'product',
                                              'client_revision': revision})
+                    else:
+                        await self.send(message)
+                        if self.product_fault == revision:
+                            self.product_fault = None
+                            await self.send({'type': 'product_recovered', 'client_revision': revision})
                     await self.frame_end(seq, capture_id)
                 finally:
                     self.pending -= 1
@@ -558,6 +562,11 @@ async def live_session(ws: WebSocket) -> None:
     """
     from .recordings import FileSource
     await ws.accept()
+    try:
+        await ws.send_json({'type':'hello','protocol':'VRF1','recommended_live_sample_rate':RECOMMENDED_LIVE_SAMPLE_RATE,
+                            'max_sample_rate':MAX_SAMPLE_RATE,'max_capture_samples':MAX_CAPTURE_SAMPLES})
+    except (WebSocketDisconnect, RuntimeError):
+        return  # the page went away before the session started
     tx, spec = TxConfig(duration=.06), SpectrumConfig(max_fft=32768, averaging=2)
     file = None
     fps, seq, capture_id, cursor, dirty, running = 30., 0, 0, 0, True, True
@@ -582,8 +591,6 @@ async def live_session(ws: WebSocket) -> None:
     processed = None    # last capture a chain consumed under real-time pacing
     frame_period = 1 / fps   # smoothed time between frame starts (real-time prefetch)
     last_frame_start = None
-    await ws.send_json({'type':'hello','protocol':'VRF1','recommended_live_sample_rate':RECOMMENDED_LIVE_SAMPLE_RATE,
-                        'max_sample_rate':MAX_SAMPLE_RATE,'max_capture_samples':MAX_CAPTURE_SAMPLES})
     # One receive is kept pending across iterations: cancelling and re-creating
     # it on every timeout made the event loop compete for the GIL with the
     # product threads (a GIL convoy that slowed products several-fold).
