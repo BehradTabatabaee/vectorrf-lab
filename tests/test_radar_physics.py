@@ -111,9 +111,11 @@ def test_coherent_processors_measure_signed_velocity(method, vr):
 
 
 def test_two_targets_are_resolved_at_their_own_ranges():
+    # Equal echoes: B's gain makes up its R⁻⁴ loss (an unweighted LFM's range
+    # sidelobes would otherwise sit at a 19 dB weaker B's level).
     d = simulate(experiment(noise_db=-100, samples=8192, sample_rate=4e6, targets=[
         SceneTarget(name='A', position=[2000, 0, 0], velocity=[0, 0, 0], gain_db=0),
-        SceneTarget(name='B', position=[6000, 0, 0], velocity=[0, 0, 0], gain_db=0)]))
+        SceneTarget(name='B', position=[6000, 0, 0], velocity=[0, 0, 0], gain_db=40 * math.log10(3))]))
     found = sorted(x['range_m'] for x in d['detections'][:4])
     bin_m = C / (2 * 4e6)
     assert any(abs(r - 2000) <= 1.5 * bin_m for r in found) and any(abs(r - 6000) <= 1.5 * bin_m for r in found), found
@@ -308,3 +310,77 @@ def test_a_delayed_periodic_record_is_band_limited_not_linearly_interpolated():
     ideal = np.exp(2j * np.pi * 0.37 * fs * (start + np.arange(1000) / fs))
     error = np.max(np.abs(periodic_slice(base, fs, fs, start, 1000) - ideal))
     assert 20 * np.log10(error) < -55
+
+
+# ------------------------------------------------------- detection quality
+
+def _burst(waveform='lfm', fs=2e6, **pulse):
+    return {'source': 'legacy', 'sample_rate': fs, 'samples': 8192, 'antenna': ISOTROPIC_1, 'legacy': {
+        'mode': 'sequence', 'sample_rate': fs, 'duration_s': 16 * 200e-6, 'sequence': [
+            {'kind': 'pulse', 'pulse': {'waveform': waveform, 'width_s': 40e-6, 'sweep_bw_hz': 500e3, **pulse},
+             'repeat': 16, 'pri_s': 200e-6}]}}
+
+
+PULSE_DOPPLER = RadarProcessing(method='pulse-doppler', pri_s=200e-6, pulse_width_s=40e-6)
+
+
+def test_cfar_counts_independent_cells_on_an_oversampled_range_axis():
+    """Range bins four to a resolution cell are correlated: a multiplier solved
+    for the bin count lets through twice the requested rate at 10⁻³ (more at
+    lower rates); solved for the independent cells it holds the rate."""
+    from scipy import signal as sig
+    from vectorrf.radar_processing import cfar_threshold
+    rng = np.random.default_rng(4)
+    z = rng.standard_normal((400, 3000)) + 1j * rng.standard_normal((400, 3000))
+    h = sig.windows.hann(9)
+    power = np.abs(sig.lfilter(h / np.sqrt(np.sum(h ** 2)), 1, z, axis=1)[:, 50:]) ** 2 / 2
+    inside = slice(40, power.shape[1] - 40)
+    rate = lambda mode, cell: np.mean(power[:, inside] > cfar_threshold(power, mode, 8, 32, 1e-3, cell=cell)[:, inside])
+    assert rate('ca-cfar', 1) > 1.8e-3
+    for mode in ('ca-cfar', 'go-cfar', 'so-cfar', 'os-cfar'):
+        assert rate(mode, 4) < 1.2e-3, mode
+
+
+@pytest.mark.parametrize('detector', ['ca-cfar', 'go-cfar', 'so-cfar', 'os-cfar'])
+def test_noise_alone_raises_no_detections(detector):
+    """10⁻⁶ per cell over a few thousand cells: noise alone is (almost) never a target."""
+    found = 0
+    for seed in range(12):
+        for body in ({**_burst(), 'processing': PULSE_DOPPLER.model_copy(update={'detector': detector})},
+                     {'antenna': ISOTROPIC_1, 'processing': RadarProcessing(detector=detector)}):
+            found += len(simulate(RadarExperiment.model_validate({**body, 'seed': seed, 'targets': [], 'noise_db': -45}))['detections'])
+    assert found <= 1
+
+
+def test_targets_at_one_range_stay_two_detections_and_sidelobes_are_not_targets():
+    """Two targets at one range, 70 m/s apart: their Doppler sidelobes join
+    them in cells above threshold, which grouped into one detection before;
+    a strong target alone is one detection, not one per sidelobe."""
+    same = simulate(RadarExperiment.model_validate({**_burst(), 'processing': PULSE_DOPPLER, 'targets': [
+        SceneTarget(name='A', position=[4000, 0, 0], velocity=[-40, 0, 0]),
+        SceneTarget(name='B', position=[4000, 0, 0], velocity=[30, 0, 0])]}))
+    found = sorted(x['velocity_mps'] for x in same['detections'])
+    assert len(found) == 2 and abs(found[0] + 40) < 8 and abs(found[1] - 30) < 8, same['detections']
+    alone = simulate(RadarExperiment.model_validate({**_burst(), 'noise_db': -80, 'processing': PULSE_DOPPLER,
+                                                    'targets': [SceneTarget(position=[5000, 0, 0], velocity=[25, 0, 0], gain_db=10)]}))
+    assert len(alone['detections']) == 1, alone['detections']
+
+
+def test_range_response_reads_the_waveforms_sidelobes():
+    from vectorrf.radar_sim import range_response, transmitter
+    lfm = range_response(transmitter(RadarExperiment.model_validate(_burst('lfm')), 0, 8192))
+    # Six samples per chip: a code sampled unevenly (6.15 per chip) has sidelobes up to -20 dB.
+    barker = range_response(transmitter(RadarExperiment.model_validate(_burst('barker', barker_length=13, width_s=39e-6)), 0, 8192))
+    assert lfm['sidelobe_db'] == pytest.approx(-13.3, abs=1.0) and lfm['cell'] == pytest.approx(2e6 * 0.886 / 500e3, abs=1)
+    assert barker['sidelobe_db'] == pytest.approx(20 * math.log10(1 / 13), abs=0.5)
+    assert lfm['mainlobe'] <= lfm['null'] < lfm['extent']
+
+
+def test_default_custom_phase_code_is_barker_7_and_detects():
+    from vectorrf.radar_studio import RadarPulseConfig
+    assert RadarPulseConfig().custom_phase_deg == [0, 0, 0, 180, 180, 0, 180]
+    d = simulate(RadarExperiment.model_validate({**_burst('custom-phase'), 'processing': PULSE_DOPPLER, 'targets': [
+        SceneTarget(name='A', position=[3000, 0, 0], velocity=[-25, 0, 0]),
+        SceneTarget(name='B', position=[7000, 0, 0], velocity=[40, 0, 0])]}))
+    for r, v in ((3000, -25), (7000, 40)):
+        assert any(abs(x['range_m'] - r) < 300 and abs(x['velocity_mps'] - v) < 10 for x in d['detections']), d['detections']

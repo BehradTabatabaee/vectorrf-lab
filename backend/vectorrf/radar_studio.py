@@ -27,7 +27,8 @@ class RadarPulseConfig(BaseModel):
     polyphase_order: int = Field(default=4, ge=2, le=32)
     phase_code_chips: int = Field(default=32, ge=2, le=4096)
     zc_root: int = Field(default=5, ge=1, le=4095)
-    custom_phase_deg: list[float] = Field(default_factory=lambda: [0.0, 180.0, 0.0, 0.0, 180.0, 0.0, 180.0])
+    # Barker 7 (+ + + − − + −): peak sidelobes at −16.9 dB.
+    custom_phase_deg: list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0, 180.0, 180.0, 0.0, 180.0])
     costas_hops: int = Field(default=7, ge=3, le=64)
     stepped_steps: int = Field(default=8, ge=2, le=256)
     stepped_spacing_hz: float = Field(default=20_000.0, gt=0.0)

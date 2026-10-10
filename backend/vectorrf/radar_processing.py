@@ -40,6 +40,28 @@ class RadarProcessing(BaseModel):
 # targets, OS tolerates interfering targets in the training cells.  Near the
 # ends of the range axis a side may be short; the cells that exist are used
 # (cell averaging when a side is missing).
+#
+# These rates assume independent cells.  A range axis sampled finer than its
+# resolution (``cell`` bins per resolution cell) has correlated neighbours:
+# the training cells hold fewer independent values than bins, the noise
+# estimate scatters more, and α solved for the bin count lets through several
+# times the requested rate.  α is therefore solved for the independent count.
+
+# Doppler (and FFT range) windows: mainlobe half-width in resolution cells
+# and peak sidelobe level in dB.
+WINDOW_MAINLOBE = {'boxcar': 1, 'hann': 2, 'hamming': 2, 'blackman': 3}
+WINDOW_SIDELOBE_DB = {'boxcar': -13.26, 'hann': -31.47, 'hamming': -42.68, 'blackman': -58.11}
+WINDOW_ENBW = {'boxcar': 1.0, 'hann': 1.5, 'hamming': 1.36, 'blackman': 1.73}
+WINDOW_DECAY_DB = {'boxcar': 6.02, 'hann': 18.06, 'hamming': 6.02, 'blackman': 18.06}   # per octave
+
+
+def window_sidelobes(window, cells):
+    """Envelope (dB) of a window's sidelobes ``cells`` resolution cells from
+    its peak: the peak sidelobe level after the mainlobe, then its decay."""
+    x = np.asarray(cells, float)
+    first = WINDOW_MAINLOBE[window] + 0.5
+    level = WINDOW_SIDELOBE_DB[window] - WINDOW_DECAY_DB[window] * np.log2(np.maximum(x / first, 1.0))
+    return np.where(x < WINDOW_MAINLOBE[window], 0.0, level)
 
 
 def _solve(pfa_of, pfa, hi=1.0):
@@ -78,8 +100,9 @@ def cfar_alpha(mode, left, right, pfa, rank=0.75):
     return n * (pfa ** (-1.0 / n) - 1.0)
 
 
-def cfar_threshold(power, mode, guard, train, pfa, rank=0.75):
-    """CFAR threshold of every cell of ``power`` (rows × range cells), along range."""
+def cfar_threshold(power, mode, guard, train, pfa, rank=0.75, cell=1.0):
+    """CFAR threshold of every cell of ``power`` (rows × range cells), along
+    range; ``cell`` range bins make one independent (resolution) cell."""
     power = np.atleast_2d(np.asarray(power, float))
     rows, n = power.shape
     idx = np.arange(n)
@@ -87,7 +110,12 @@ def cfar_threshold(power, mode, guard, train, pfa, rank=0.75):
     b_lo, b_hi = np.clip(idx + guard + 1, 0, n), np.clip(idx + guard + train + 1, 0, n)
     left, right = a_hi - a_lo, b_hi - b_lo
     pairs = {(int(l), int(r)) for l, r in zip(left, right)}
-    lookup = {pair: cfar_alpha(mode, pair[0], pair[1], float(pfa), float(rank)) for pair in pairs}
+
+    def independent(count):
+        # Not fewer than four a side: a window holding fewer resolution cells
+        # (a long unmodulated pulse) still estimates the noise level.
+        return 0 if count <= 0 else max(min(count, 4), int(round(count / max(float(cell), 1.0))))
+    lookup = {pair: cfar_alpha(mode, independent(pair[0]), independent(pair[1]), float(pfa), float(rank)) for pair in pairs}
     alpha = np.array([lookup[(int(l), int(r))] for l, r in zip(left, right)])
     if mode == 'os-cfar':
         threshold = np.empty_like(power)
@@ -114,23 +142,52 @@ def cfar_threshold(power, mode, guard, train, pfa, rank=0.75):
         return np.where(left + right > 0, alpha * level, np.inf)
 
 
-def detect(power, threshold, limit=24):
+def detect(power, threshold, limit=24, footprint=(1, 1), sidelobes=(None, None)):
     """Detections of a range-Doppler map, strongest first: ``[(row, column), …]``.
 
-    Cells above their threshold are grouped into 8-connected clusters and
-    each cluster reports its strongest cell, so one target is one detection
-    however many range and Doppler cells (mainlobe and sidelobes) its echo
-    lifts above the threshold.
+    A detection is the strongest cell within ``footprint`` = (Doppler rows,
+    range bins) on each side -- the response's mainlobe -- where some cell of
+    that mainlobe crosses its threshold (the threshold varies across a
+    mainlobe when one side's training cells hold another target's
+    sidelobes), so a target is one detection and two targets a mainlobe
+    apart are two.  A weaker peak on a stronger one's Doppler row (range
+    column) that does not exceed that peak's range (Doppler) sidelobes at
+    that distance, plus 6 dB for noise riding on them, is taken for a
+    sidelobe, not a target: ``sidelobes`` = (range, Doppler) sidelobe
+    envelopes in dB, indexed by the distance in bins (rows); beyond an
+    envelope's end there are none.
     """
     from scipy import ndimage
-    power = np.atleast_2d(power)
+    power = np.atleast_2d(np.asarray(power, float))
+    fd, fr = max(0, int(footprint[0])), max(0, int(footprint[1]))
     hits = power > threshold
     if not hits.any():
         return []
-    labels, count = ndimage.label(hits, structure=np.ones((3, 3), bool))
-    peaks = ndimage.maximum_position(power, labels, index=np.arange(1, count + 1))
-    peaks = sorted(peaks, key=lambda rc: power[rc], reverse=True)[:limit]
-    return [(int(r), int(c)) for r, c in peaks]
+    size = (2 * fd + 1, 2 * fr + 1)
+    strongest = ndimage.maximum_filter(power, size=size, mode='nearest')
+    crossed = ndimage.maximum_filter(hits, size=size, mode='nearest')
+    rows, cols = np.nonzero(crossed & (power >= strongest) & (power > 0))
+    order = np.argsort(power[rows, cols])[::-1]
+    def floors(envelope, size):
+        level = np.full(size, -np.inf) if envelope is None else np.full(size, -np.inf)
+        if envelope is not None:
+            e = np.asarray(envelope, float)[:size]
+            level[:len(e)] = e
+        return 10 ** ((level + 6) / 10)
+    range_floor = floors(sidelobes[0], power.shape[1])
+    doppler_floor = floors(sidelobes[1], power.shape[0])
+    kept = []
+    for r, c in zip(rows[order], cols[order]):
+        p = power[r, c]
+        if any((abs(int(r) - kr) <= fd and abs(int(c) - kc) <= fr)                     # the same mainlobe (a plateau)
+               or (abs(int(c) - kc) <= fr and p < doppler_floor[abs(int(r) - kr)] * power[kr, kc])   # Doppler sidelobe
+               or (abs(int(r) - kr) <= fd and p < range_floor[abs(int(c) - kc)] * power[kr, kc])     # range sidelobe
+               for kr, kc in kept):
+            continue
+        kept.append((int(r), int(c)))
+        if len(kept) >= limit:
+            break
+    return kept
 
 
 def cancel_clutter(cube,mode):

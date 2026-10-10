@@ -3,7 +3,7 @@ import math
 from typing import Literal
 from functools import lru_cache
 import numpy as np
-from scipy import signal,fft
+from scipy import ndimage,signal,fft
 from pydantic import BaseModel,Field,ConfigDict,model_validator
 from .programs import WaveProgram,program_samples
 from .pipeline import Pipeline,process_chain,preview
@@ -14,7 +14,7 @@ from .signal import generate
 from .dsp import fractional_delay
 from .spectrum import analyze
 from .engine import reduce_spectrum
-from .radar_processing import RadarProcessing,cfar_threshold,detect,range_doppler
+from .radar_processing import RadarProcessing,WINDOW_ENBW,WINDOW_MAINLOBE,cfar_threshold,detect,range_doppler,window_sidelobes
 C=299792458.
 # Sample-count bounds (rate-independent).  Channels × samples bounds the
 # complex128 array cube; range–Doppler cells bound the correlator surface.
@@ -191,6 +191,34 @@ def mainlobe_bins(ref,level=.1):
     below=np.flatnonzero(ac<level*ac[0])
     return int(below[0]) if len(below) else min(n,4096)
 
+def range_response(ref,level_db=-20.0,max_lag=4096):
+    """Shape of ``ref``'s compressed response along range, in samples.
+
+    ``mainlobe``: half-width down to -10 dB; ``null``: its first null (the
+    whole mainlobe); ``cell``: the -3 dB width (one independent resolution
+    cell); ``extent``: how far sidelobes above ``level_db`` reach (the first
+    quiet stretch after them); ``sidelobe_db``: the peak sidelobe level
+    beyond the first null; ``envelope_db``: the sidelobe level at each lag
+    (the strongest response within a resolution cell of it).
+    """
+    n=len(ref)
+    ac=abs(signal.fftconvolve(ref,np.conj(ref[::-1]),'full')[n-1:n-1+min(n,max_lag)])**2
+    if not len(ac) or ac[0]<=0:return {'mainlobe':1,'null':1,'cell':1.0,'extent':1,'sidelobe_db':-13.26,'envelope_db':np.zeros(1)}
+    p=ac/ac[0];m=len(p)
+    below=np.flatnonzero(p<.1);mainlobe=int(below[0]) if len(below) else m
+    half=np.flatnonzero(p<.5);cell=max(1.0,2.0*float(half[0])) if len(half) else float(m)
+    run=max(8,2*mainlobe);loud=p>=10**(level_db/10)
+    if mainlobe+run<m:
+        noisy=np.lib.stride_tricks.sliding_window_view(loud[mainlobe:],run).any(axis=1)
+        quiet=np.flatnonzero(~noisy);extent=mainlobe+int(quiet[0]) if len(quiet) else m
+    else:extent=m
+    null=next((i for i in range(1,m-1) if p[i]<=p[i-1] and p[i]<=p[i+1]),mainlobe)
+    tail=p[null:max(extent,null+run)]
+    sidelobe=float(10*np.log10(max(float(tail.max()) if len(tail) else 0.,1e-12)))
+    reach=max(1,int(math.ceil(cell)))
+    envelope=10*np.log10(np.maximum(ndimage.maximum_filter1d(p,2*reach+1,mode='nearest'),1e-12))
+    return {'mainlobe':max(1,mainlobe),'null':max(1,null),'cell':cell,'extent':max(1,extent),'sidelobe_db':sidelobe,'envelope_db':envelope}
+
 @lru_cache(maxsize=2)
 def doppler_mixers(n,fs,doppler):
     return np.exp(-2j*np.pi*np.asarray(doppler)[:,None]*np.arange(n)[None,:]/fs)
@@ -274,22 +302,48 @@ def simulate(req:RadarExperiment):
         rd=rd[:,keep];range_axis=range_axis[keep];maxlag=len(range_axis)
     power=abs(rd)**2;peak=np.unravel_index(np.argmax(power),power.shape)
     profile=np.max(power,axis=0);profile_rows=np.argmax(power,axis=0)
-    # CFAR guard cells must cover the compressed mainlobe, or a target raises its
-    # own threshold: the mainlobe spans more range bins at higher sample rates.
+    # CFAR guard cells must cover the compressed mainlobe (to its first null),
+    # or a target raises its own threshold: the mainlobe spans more range bins
+    # at higher sample rates.  A strong target's sidelobes raise it too, and guarding all of
+    # them pushes a weak neighbour's training cells into the sidelobes of the
+    # strong one; so two thresholds are formed, with the guard over the
+    # mainlobe and over the sidelobes, and a cell is compared with the lower
+    # (each at half the false-alarm probability, so the union keeps the rate).
+    # The CFAR multiplier counts training cells per resolution cell, not per bin.
     guard,train=req.cfar_guard,req.cfar_train
+    wide=None
     if req.processing.method!='fmcw':
-        lobe=mainlobe_bins(ref)
-        guard=max(guard,lobe);train=max(train,lobe)
+        shape=range_response(ref)
+        guard=max(guard,shape['null']);train=max(train,shape['mainlobe'])
+        wide=shape['extent'] if shape['extent']>guard else None
+        cell,range_lobe,range_envelope=shape['cell'],shape['mainlobe'],shape['envelope_db']
+    else:
+        window=req.processing.range_window
+        cell,range_lobe=WINDOW_ENBW[window],WINDOW_MAINLOBE[window]
+        range_envelope=window_sidelobes(window,np.arange(len(range_axis)))
+    # Doppler: the window's mainlobe in velocity rows (rows are finer than the resolution).
+    window=req.processing.doppler_window
+    coherent=processor_info.get('coherent_time_s') or len(processed)/pfs
+    resolution=lam/(2*coherent);step=abs(float(velocity[1]-velocity[0])) if len(velocity)>1 else resolution
+    doppler_lobe=max(1,math.ceil(WINDOW_MAINLOBE[window]*resolution/max(step,1e-12)))
     detector=req.processing.detector
     if detector=='manual':
         threshold=np.full(power.shape,10**(req.processing.threshold_db/10))
     elif maxlag>train+guard:
         # Along range in every Doppler row: each cell is tested against its own row.
-        threshold=cfar_threshold(power,detector,guard,train,req.cfar_pfa,req.processing.os_rank)
+        pfa=req.cfar_pfa/2 if wide else req.cfar_pfa
+        threshold=cfar_threshold(power,detector,guard,train,pfa,req.processing.os_rank,cell)
+        if wide and maxlag>train+wide:
+            threshold=np.minimum(threshold,cfar_threshold(power,detector,wide,train,pfa,req.processing.os_rank,cell))
     else:
         threshold=np.full(power.shape,np.inf)
         warnings.append(f'The CFAR window (guard {guard} + {train} training bins on a side) does not fit the {maxlag}-bin range profile: no CFAR detections. Increase the maximum range or use the manual detector.')
-    cells=detect(power,threshold)
+    doppler_envelope=window_sidelobes(window,np.arange(len(velocity))*step/resolution)
+    cells=detect(power,threshold,footprint=(doppler_lobe,range_lobe),sidelobes=(range_envelope,doppler_envelope))
+    # A detection's margin: the largest excess over the threshold in its mainlobe.
+    with np.errstate(divide='ignore',invalid='ignore'):
+        ratio=np.where(np.isfinite(threshold)&(threshold>0),power/threshold,0.)
+    margin=ndimage.maximum_filter(ratio,size=(2*doppler_lobe+1,2*range_lobe+1),mode='nearest') if cells else ratio
     # The range profile is the Doppler maximum; its threshold is the one of the
     # row holding that maximum, so a profile crossing is a detected cell.
     threshold_profile=threshold[profile_rows,np.arange(maxlag)]
@@ -331,7 +385,7 @@ def simulate(req:RadarExperiment):
       'pattern_db':(20*np.log10(pattern+1e-12)).tolist(),'steer_az_deg':steer_az,'array_positions':pos.tolist(),
       'autocorr_db':ac.tolist(),'autocorr_delay_s':(np.arange(len(ac))/fs).tolist(),
       'detections':[{'range_m':float(range_axis[c]),'velocity_mps':float(velocity[r]),'power_db':float(10*np.log10(power[r,c]+1e-30)),
-                     'margin_db':float(10*np.log10(power[r,c]/threshold[r,c])) if np.isfinite(threshold[r,c]) and threshold[r,c]>0 else None} for r,c in cells],
+                     'margin_db':float(10*np.log10(margin[r,c])) if np.isfinite(margin[r,c]) and margin[r,c]>0 else None} for r,c in cells],
       'detector':detector,
       'truth':truth,'warnings':warnings,'rx_rms':float(np.sqrt(np.mean(abs(beam)**2))),
       'processing_method':req.processing.method,'processor_info':processor_info,
