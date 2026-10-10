@@ -271,11 +271,14 @@ class MeasurementRequest(BaseModel):
     source: FileSource | None = None
     offset_s: float = Field(default=0, ge=0)
     duration_s: float = Field(default=.002, gt=0, le=1)
-    # Zero-span tuning: mix ``center_hz`` to DC and limit to ``bandwidth_hz``
-    # (the zero-span resolution bandwidth) before AM/PM/FM detection.
+    # Zero span is tuned to ``center_hz`` and filtered by a Gaussian resolution
+    # bandwidth ``bandwidth_hz`` (None: the RBW the display resolves) before
+    # AM/PM/FM detection; ``full_band`` detects the whole sampled band instead.
     center_hz: float = 0.0
     bandwidth_hz: float | None = Field(default=None, gt=0)
+    full_band: bool = False
     quality: bool = False
+    component: int | None = Field(default=None, ge=0)
     capture_id: int = Field(default=0,ge=0,le=2147483647)
 
 

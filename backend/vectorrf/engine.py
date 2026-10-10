@@ -285,11 +285,15 @@ class MeasurementSpec(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
     offset_s: float = Field(default=0, ge=0)
     duration_s: float = Field(default=.002, gt=0, le=1)
-    # Zero-span tuning: mix ``center_hz`` to DC and limit to ``bandwidth_hz``
-    # (the zero-span resolution bandwidth) before AM/PM/FM detection.
+    # Zero span is tuned to ``center_hz`` and filtered by a Gaussian resolution
+    # bandwidth ``bandwidth_hz`` (None: the RBW the display resolves) before
+    # AM/PM/FM detection; ``full_band`` detects the whole sampled band instead.
     center_hz: float = 0.0
     bandwidth_hz: float | None = Field(default=None, gt=0)
+    full_band: bool = False
     quality: bool = False
+    # Modulation quality of a composite measures one component (None: the first enabled one).
+    component: int | None = Field(default=None, ge=0)
 
 
 # Modulation quality keeps the most recent tracked symbols of consecutive
@@ -298,6 +302,7 @@ class MeasurementSpec(BaseModel):
 QUALITY_SYMBOLS = 2048
 QUALITY_TRACE_POINTS = 1000
 LINEAR_MODULATIONS = {"bpsk", "qpsk", "8psk", "16qam", "64qam", "16apsk", "32apsk", "dbpsk", "dqpsk", "pi4-dqpsk", "oqpsk"}
+EVM_MODULATIONS = LINEAR_MODULATIONS | {"ofdm"}   # the formats whose demodulator reports an EVM
 
 
 def _evm_quality(r, rx, store, digits=None):
@@ -334,28 +339,88 @@ def _evm_quality(r, rx, store, digits=None):
     return record, metrics, telemetry
 
 
-def measurement_product(g, tx, recording, capture_id, m: MeasurementSpec, memory=None, digits=None):
+ZERO_SPAN_TRACES = ('time_s', 'i', 'q', 'amplitude', 'phase_deg', 'frequency_hz')
+
+
+def _level(mean_power, g):
+    """Mean power of record ``g``'s samples on its calibrated scale (dBm, or dBFS)."""
+    reference_dbm, reference_rms = g.metadata.get('power_dbm'), g.metadata.get('power_reference_rms')
+    if not mean_power > 0:
+        return None
+    if reference_dbm is None or not reference_rms:
+        return 10 * math.log10(mean_power)
+    return 10 * math.log10(mean_power / reference_rms ** 2) + float(reference_dbm)
+
+
+def _surroundings(g, tx, recording):
+    """``around(lo, hi)``: the source's samples at positions ``lo … hi`` of
+    record ``g``, generated beyond the record's ends (the transmitter is one
+    stream); recordings give zeros there."""
+    n, origin = len(g.samples), int(g.metadata.get('start_sample', 0))
+
+    def stream(start, count):
+        from .signal import capture_prefix, generate
+        if recording or count <= 0 or origin + start < 0:
+            return np.zeros(max(0, count), dtype=np.complex64)
+        return generate(capture_prefix(tx, max(32, count)), start_sample=origin + start).samples[:count]
+
+    def around(lo, hi):
+        inside = np.asarray(g.samples[max(lo, 0):max(min(hi, n), 0)], dtype=np.complex64)
+        return np.concatenate([stream(lo, min(0, hi) - lo), inside, stream(max(n, lo), hi - max(n, lo))])
+    return around
+
+
+def _quality_design(tx, component):
+    """The design modulation quality measures: ``tx``, or one of its components.
+
+    Returns ``(design, index, tuner_hz, schedules)``: the component's own
+    design on the transmitter's clock, its index (None for a plain design),
+    the frequency it sits at and the hop schedules to remove.
+    """
+    if tx.waveform.value != 'composite' or not tx.components:
+        return tx, None, float(tx.center_hz), [tx.agility]
+    enabled = [i for i, c in enumerate(tx.components) if c.enabled] or [0]
+    index = component if component is not None and component in enabled else enabled[0]
+    c = tx.components[index].model_copy(update={'sample_rate': tx.sample_rate})
+    return c, index, float(tx.center_hz + c.center_hz), [tx.agility, c.agility]
+
+
+def measurement_product(g, tx, recording, capture_id, m: MeasurementSpec, memory=None, digits=None, segment=None):
     """Zero span (and, with ``m.quality``, modulation quality) of capture ``g``.
 
-    ``memory`` (kept between captures by the live engine) lets the quality
-    receiver keep tracking from capture to capture and accumulate the most
-    recent ``QUALITY_SYMBOLS`` symbols.  ``digits`` rounds the plot traces
-    (live frames); REST responses keep full precision.
+    ``segment`` is the ``[start, stop)`` of the record to measure (every-sample
+    pacing sweeps a record in consecutive segments); by default zero span
+    measures its interval and quality the whole record.  ``memory`` (kept
+    between captures by the live engine) lets the quality receiver keep
+    tracking from capture to capture and accumulate the most recent
+    ``QUALITY_SYMBOLS`` symbols.  ``digits`` rounds the plot traces (live
+    frames); REST responses keep full precision.
     """
     from .measurements import zero_span
-    # A high-rate real-time capture can be shorter than the user's last chosen
-    # interval.  Start at its beginning rather than silently returning the
-    # final two samples (or leaving the previous plot on screen).
-    offset = m.offset_s if int(m.offset_s * g.sample_rate) < len(g.samples) - 1 else 0.0
+    fs = g.sample_rate
+    origin = int(g.metadata.get('start_sample', 0))
     if m.quality:
-        # The quality page draws none of the zero-span traces.
-        out = {'sample_rate': g.sample_rate, 'capture_start_s': 0.0, 'capture_duration_s': len(g.samples) / g.sample_rate}
+        a, b = segment if segment is not None else (0, len(g.samples))
+        out = {'sample_rate': fs, 'capture_start_s': a / fs, 'capture_duration_s': (b - a) / fs}
     else:
-        out = zero_span(g.samples, g.sample_rate, offset, m.duration_s, m.center_hz, m.bandwidth_hz,
-                        start_sample=int(g.metadata.get('start_sample', 0)))
-        for key in ('time_s', 'i', 'q', 'amplitude', 'phase_deg', 'frequency_hz'):
-            out[key] = display_values(out[key], digits)
-    out['interval_clipped'] = offset != m.offset_s or int((offset + m.duration_s) * g.sample_rate) > len(g.samples)
+        if segment is not None:
+            offset, duration = segment[0] / fs, (segment[1] - segment[0]) / fs
+        else:
+            # A high-rate real-time capture can be shorter than the chosen
+            # interval: start at its beginning rather than measuring its last samples.
+            offset = m.offset_s if int(m.offset_s * fs) < len(g.samples) - 1 else 0.0
+            duration = m.duration_s
+        out = zero_span(g.samples, fs, offset, duration, m.center_hz, m.bandwidth_hz, m.full_band, start_sample=origin,
+                        around=_surroundings(g, tx, recording))
+        out['level_db'] = _level(out['rms'] ** 2, g)
+        out['level_unit'] = (g.metadata.get('power_unit') or 'dBm') if g.metadata.get('power_reference_rms') else 'dBFS'
+        for key in ZERO_SPAN_TRACES:
+            for k in (key, f'{key}_max'):
+                if k in out:
+                    out[k] = display_values(out[k], digits)
+        # The interval was cut to the captured window (the browser then shows that window).
+        out['interval_clipped'] = bool(abs(out['capture_duration_s'] - m.duration_s) * fs > 1
+                                       or (segment is None and abs(out['capture_start_s'] - m.offset_s) * fs > 1))
     out['source_revision'] = g.metadata['source_revision']
     out['capture_id'] = capture_id
     out['capture_start_sample'] = g.metadata.get('start_sample')
@@ -364,90 +429,136 @@ def measurement_product(g, tx, recording, capture_id, m: MeasurementSpec, memory
         if memory is not None:
             memory.pop('quality', None)
         return out
+    x = np.asarray(g.samples[a:b], dtype=np.complex64)
+    start = origin + a
+    design, index, tuner, schedules = (tx, None, 0.0, []) if recording else _quality_design(tx, m.component)
     # Mixed frames intentionally do not pretend that one demodulator applies
     # to the whole record.  Their detailed quality belongs in RX framing.
-    mixed = not recording and tx.frame_enabled and tx.frame_mode == "blocks"
-    allowed = set(RxConfig.model_fields['modulation'].annotation.__args__)
-    agility = tx.agility
+    mixed = not recording and design.frame_enabled and design.frame_mode == "blocks"
     # Gated hops leave empty dwell gaps that no symbol-based EVM describes.
-    gated = agility.enabled and (agility.off_s > 0 or agility.ramp_s > 0)
-    r = None
-    start = int(g.metadata.get('start_sample', 0))
-    x = np.asarray(g.samples, dtype=np.complex64)
-    if not recording:
-        x = dehop(x, [agility], g.sample_rate, g.metadata.get('start_sample')).astype(np.complex64)
-    if not recording and abs(tx.center_hz) > 1e-12:
-        from .dsp import phasor
-        x = (x * phasor(-tx.center_hz, g.sample_rate, len(x), start)).astype(np.complex64)
+    gated = any(s.enabled and (s.off_s > 0 or s.ramp_s > 0) for s in schedules)
+    schedules = [s for s in schedules if s.enabled]
+    if schedules:
+        x = dehop(x, schedules, fs, start).astype(np.complex64)
     record = None
-    if not recording and not mixed and not gated and tx.waveform.value in allowed:
-        rx = RxConfig(modulation=tx.waveform.value, sample_rate=tx.sample_rate,
-                      symbol_rate=tx.symbol_rate, rolloff=tx.rolloff, pulse_shape=tx.pulse_shape,
-                      filter_span_symbols=tx.filter_span_symbols, apsk_ratio2=tx.apsk_ratio2,
-                      apsk_ratio3=tx.apsk_ratio3, ofdm_fft=tx.ofdm_fft, ofdm_cp=tx.ofdm_cp,
-                      ofdm_occupied=tx.ofdm_occupied, ofdm_design=tx.ofdm_design,
-                      ofdm_start_s=float(g.metadata.get('simulation_time_s', 0.0)), fsk_deviation_hz=tx.fsk_deviation_hz,
-                      fm_deviation_hz=max(1, tx.fm_deviation_hz), coarse_cfo=True, timing_recovery="mueller-muller")
+    if not recording and not mixed and not gated and design.waveform.value in EVM_MODULATIONS:
+        rx = RxConfig(modulation=design.waveform.value, sample_rate=fs, tuner_hz=tuner,
+                      symbol_rate=design.symbol_rate, rolloff=design.rolloff, pulse_shape=design.pulse_shape,
+                      filter_span_symbols=design.filter_span_symbols, apsk_ratio2=design.apsk_ratio2,
+                      apsk_ratio3=design.apsk_ratio3, ofdm_fft=design.ofdm_fft, ofdm_cp=design.ofdm_cp,
+                      ofdm_occupied=design.ofdm_occupied, ofdm_design=design.ofdm_design,
+                      ofdm_start_s=start / fs, fsk_deviation_hz=design.fsk_deviation_hz,
+                      fm_deviation_hz=max(1, design.fm_deviation_hz), coarse_cfo=True, timing_recovery="mueller-muller")
         store = memory.setdefault('quality', {}) if memory is not None else {}
         key = rx.model_dump_json(exclude={'ofdm_start_s'})
         if store.get('key') != key:
             store.clear()
             store['key'] = key
         r = demodulate(x, rx, start, store.setdefault('track', {}) if memory is not None else None)
-        if r.metrics.get("evm_rms_percent") is not None or tx.waveform.value in LINEAR_MODULATIONS:
+        if r.metrics.get("evm_rms_percent") is not None or design.waveform.value in LINEAR_MODULATIONS:
             record, metrics, telemetry = _evm_quality(r, rx, store, digits)
+    label = None if index is None else f'component {index + 1} ({tx.components[index].label or design.waveform.value})'
     if record is not None and len(record) >= 16:
-        out['quality'] = {'kind': 'evm', 'metrics': metrics, 'telemetry': telemetry,
+        out['quality'] = {'kind': 'evm', 'metrics': metrics, 'telemetry': telemetry, 'component': index,
                           'symbols': display_complex(record, 2000, digits),
                           'method': 'Decision-directed EVM with the known modulation, rate, filter and tuning, over the '
-                                    f'{len(record):,} most recent tracked symbols; not a standards conformance result.'}
+                                    f'{len(record):,} most recent tracked symbols'
+                                    f'{" of " + label if label else ""}; not a standards conformance result.'}
         return out
-    # Fundamentals, analog, FSK/MSK, mixed frames and recordings still get a
-    # useful quality page: I/Q trajectory, envelope, phase and frequency.
-    amp = np.abs(x).astype(np.float64)
-    phase = np.unwrap(np.angle(x).astype(np.float64))
-    freq = np.r_[0.0, np.angle(x[1:] * np.conj(x[:-1])) * g.sample_rate / (2 * np.pi)] if len(x) > 1 else np.zeros(len(x))
-    valid = amp > max(float(np.max(amp)) * .01, 1e-12) if len(amp) else np.zeros(0, dtype=bool)
+    quality = _waveform_quality(x, fs, start, design, tuner, recording, digits,
+                                _surroundings(g, tx, recording) if not schedules else None, a)
+    quality['component'] = index
+    if record is not None:
+        quality['method'] = (f'{len(record)} of the 16 symbols an EVM needs recovered so far: the record fills as '
+                             'captures arrive (or raise the symbol rate). Meanwhile, the waveform.')
+    elif mixed:
+        quality['method'] = 'Mixed-modulation frame: the waveform. Use Receiver → Framing for per-block acquisition and decoding.'
+    elif gated:
+        quality['method'] = 'Hopping with off-time or ramps: the waveform after removing the known hop schedule. EVM needs continuous dwells.'
+    elif label:
+        quality['method'] = f'{label[0].upper()}{label[1:]}: {quality["method"]}'
+    out['quality'] = quality
+    return out
+
+
+QUALITY_POINTS = 600
+
+
+def _waveform_quality(x, fs, start, design, tuner, recording, digits, around=None, offset=0):
+    """Modulation quality of a signal without symbols: tuned to its carrier and
+    limited to its band, its I/Q trajectory, envelope, frequency and phase."""
+    from .bands import content_band
+    from .dsp import phasor
+    from .measurements import auto_bandwidth, buckets, rbw_filter
+    duration = len(x) / fs
+    band = None if recording else content_band(design)
+    lo, hi = band if band is not None else (0.0, 0.0)
+    width = hi - lo
+    center = tuner + (lo + hi) / 2
+    # Twice the occupied width keeps the band's edges within 0.7 dB of the
+    # Gaussian filter's peak; a tone (no width) gets the RBW the display resolves.
+    rbw = max(2.0 * width, auto_bandwidth(duration, QUALITY_POINTS), 2.0 / duration)
+    if band is None or rbw >= fs / 6 or abs(center) + 3 * rbw > fs / 2:
+        # Unknown or too wide a band to narrow down: the full band, tuned.
+        y, rate, rbw = x, fs, None
+        if center:
+            y = (x * phasor(-center, fs, len(x), start)).astype(np.complex64)
+    else:
+        # ``around`` addresses the record; ``x`` starts ``offset`` samples into it.
+        shifted = None if around is None else (lambda lo, hi: around(lo + offset, hi + offset))
+        y, _, rate = rbw_filter(x, fs, 0, len(x), center, rbw, start, shifted)
+    amp = np.abs(y).astype(np.float64)
+    valid = amp > max(float(amp.max(initial=0.0)) * .01, 1e-12)
+    step = np.angle(y[1:] * np.conj(y[:-1])).astype(np.float64) if len(y) > 1 else np.zeros(0)
+    phase = (float(np.angle(y[0])) + np.r_[0.0, np.cumsum(step)]) if len(y) else np.zeros(0)
+    freq = np.r_[np.nan, step * rate / (2 * np.pi)] if len(y) else np.zeros(0)
     frequency_valid = valid.copy()
     if len(frequency_valid):
         frequency_valid[0] = False
         frequency_valid[1:] &= valid[:-1]
-    freq[~frequency_valid] = 0
-    measured_freq = freq[frequency_valid]
-    take = max(1, len(x) // QUALITY_TRACE_POINTS)
-    if record is not None:
-        method = (f'{len(record)} of the 16 symbols an EVM needs recovered so far: the record fills as captures arrive '
-                  '(or raise the symbol rate). Meanwhile, the direct waveform.')
-    elif mixed:
-        method = 'Mixed-modulation frame overview. Use Receiver → Framing for per-block acquisition and decoding.'
-    elif not recording and tx.waveform.value == 'composite':
-        method = 'Composite signal: direct I/Q trajectory of the sum. Receive one component in Receiver to measure its EVM.'
-    elif not recording and gated:
-        method = 'Hopping with off-time or ramps: direct I/Q view after removing the known hop schedule. EVM needs continuous dwells.'
-    elif recording:
-        method = 'Recording: direct I/Q trajectory, envelope, phase and instantaneous frequency. Decode it in Receiver with an explicit format.'
+    freq[~frequency_valid] = np.nan
+    phase[~valid] = np.nan
+    measured = freq[frequency_valid]
+    times = (start + np.arange(len(y)) * (len(x) / max(len(y), 1))) / fs
+    t_low, t_high = buckets(times, QUALITY_POINTS)
+    telemetry = {'time_s': display_values(t_low if t_high is None else (t_low + t_high) / 2, digits)}
+    for key, values in (('amplitude', amp), ('frequency_hz', freq), ('phase_deg', np.rad2deg(phase))):
+        low, high = buckets(values, QUALITY_POINTS)
+        telemetry[key] = display_values(low, digits)
+        if high is not None:
+            telemetry[f'{key}_max'] = display_values(high, digits)
+    on = amp[valid]
+    if recording:
+        method = ('Recording: I/Q trajectory, envelope, instantaneous frequency and phase over the whole band. '
+                  'Decode it in Receiver with an explicit format.')
+    elif rbw is None:
+        method = ('The full band, tuned to the signal: I/Q trajectory, envelope, instantaneous frequency and phase. '
+                  'EVM is not defined for this signal type.')
     else:
-        method = 'Direct baseband waveform: I/Q trajectory, envelope, phase and instantaneous frequency. EVM is not defined for this signal type.'
-    out['quality'] = {
+        method = (f'Tuned to {"the carrier" if not width else "the centre of the band"} and filtered by a {_hz(rbw)} '
+                  'Gaussian RBW: I/Q trajectory, envelope, instantaneous frequency and phase. '
+                  'EVM is not defined for this signal type.')
+    return {
         'kind': 'basic',
         'metrics': {
             'rms': float(np.sqrt(np.mean(amp * amp))) if len(amp) else 0.0,
-            'peak': float(np.max(amp)) if len(amp) else 0.0,
-            'mean_frequency_hz': float(np.mean(measured_freq)) if len(measured_freq) else None,
-            'frequency_std_hz': float(np.std(measured_freq)) if len(measured_freq) else None,
+            'peak': float(amp.max(initial=0.0)),
+            'am_percent': float(100 * np.std(on) / np.mean(on)) if len(on) > 1 and np.mean(on) > 0 else None,
+            'mean_frequency_hz': float(np.mean(measured)) if len(measured) else None,
+            'frequency_std_hz': float(np.std(measured)) if len(measured) else None,
+            'center_hz': center, 'bandwidth_hz': rbw, 'analysis_rate': rate,
         },
-        'telemetry': {
-            'time_s': display_values((start + np.arange(0, len(x), take)) / g.sample_rate, digits),
-            'amplitude': display_values(amp[::take], digits),
-            'phase_deg': display_values(np.rad2deg(phase[::take]), digits),
-            'frequency_hz': display_values(freq[::take], digits),
-            'phase_valid': valid[::take].tolist(),
-            'frequency_valid': frequency_valid[::take].tolist(),
-        },
-        'symbols': display_complex(x[::take], maximum=2000, digits=digits),
+        'telemetry': telemetry,
+        'symbols': display_complex(y, maximum=2000, digits=digits),
         'method': method,
     }
-    return out
+
+
+def _hz(value):
+    for scale, prefix in ((1e9, 'G'), (1e6, 'M'), (1e3, 'k')):
+        if abs(value) >= scale:
+            return f'{value / scale:.4g} {prefix}Hz'
+    return f'{value:.4g} Hz'
 
 
 def _timed(work, samples, fn, *args):
@@ -585,6 +696,7 @@ async def live_session(ws: WebSocket) -> None:
     stream = _CaptureStream()
     stream.configure(tx, file)
     advance_next = False
+    sweep = 0           # next sample of the record an every-sample measurement measures
     pacing = 'contiguous'
     client_revision = 0
     pacer = _Pacer()
@@ -721,15 +833,19 @@ async def live_session(ws: WebSocket) -> None:
                 depth = REALTIME_PRODUCT_DEPTH if realtime else 1
                 if chain_active and flow.pending >= depth:
                     continue  # the loop waits for the product sender (see above)
+                # The measurement is the product only without a receiver or chain.
+                measuring = measure is not None and rx is None and pipeline is None
+                zero = measuring and not measure.quality
                 # Real time drops what the chain cannot process at the display rate.
-                heavy = rx is not None or pipeline is not None or measure is not None
-                limit = work.limit(capture_window, fps) if realtime and heavy else None
-                if realtime and measure is not None and not measure.quality and rate:
-                    # Zero span reads only its interval: generate no further than its end.
-                    need = min(capture_window, max(MIN_WORK_SAMPLES, math.ceil((measure.offset_s + measure.duration_s) * rate)))
-                    limit = min(limit or capture_window, need)
-                    if limit >= capture_window:
-                        limit = None
+                # A zero-span sweep costs what its interval costs: it reads that
+                # interval whole and generates no further than its end.
+                limit = work.limit(capture_window, fps) if realtime and chain_active and not zero else None
+                if realtime and zero and rate:
+                    from .measurements import settling_samples
+                    need = math.ceil((measure.offset_s + measure.duration_s) * rate) + settling_samples(
+                        rate, measure.duration_s, measure.bandwidth_hz, measure.full_band)
+                    need = min(capture_window, max(MIN_WORK_SAMPLES, need))
+                    limit = need if need < capture_window else None
                 if limit is not None and file is None and (rx is not None or (measure is not None and measure.quality)):
                     # A receiver needs a few symbols beyond its filters' transient in
                     # every capture it keeps, however expensive the samples are.
@@ -784,6 +900,7 @@ async def live_session(ws: WebSocket) -> None:
                 last_frame_start = frame_started
                 if dirty or record is None:
                     record = await stream.load(capture_id)
+                    sweep = 0
                     if dirty:
                         dirty, axis_signature = False, None
                         # Products of the previous source go out before its successor's metadata.
@@ -791,6 +908,21 @@ async def live_session(ws: WebSocket) -> None:
                         await flow.send({'type':'meta','client_revision':client_revision,'sample_rate':record.sample_rate,'waveform':record.metadata.get('waveform',tx.waveform.value),
                                          'source_kind':record.metadata.get('source_kind','transmitter'),'metadata':_public_metadata(record),'spectrum':spec.model_dump()})
                 stream.prefetch(next_capture, replace=not realtime)
+                # Every-sample pacing measures a record in consecutive segments: zero
+                # span sweeps intervals of its length, quality takes what it can
+                # process per frame (at least the symbols a receiver needs), so
+                # every sample is measured and the stream runs slower than real time.
+                segment = None
+                if measuring and not realtime:
+                    total = len(record.samples)
+                    if zero:
+                        size = max(2, int(round(measure.duration_s * record.sample_rate)))
+                    else:
+                        size = max(work.limit(total, fps) or total, MIN_WORK_SAMPLES, _symbol_floor(tx) if file is None else 0)
+                    size = min(size, total)
+                    # The last segment of a record ends at its end (overlapping the one before).
+                    segment = (min(sweep, total - size), min(sweep, total - size) + size)
+                    sweep = segment[1]
                 start = time.perf_counter()
                 sr, f, p, cursor, exhausted = await asyncio.to_thread(frame_product,record,spec,cursor)
                 # Frequency coordinates are invariant until source-rate/analyzer
@@ -821,22 +953,24 @@ async def live_session(ws: WebSocket) -> None:
                 elif pipeline is not None:
                     product_kind, product_fn, product_args = 'pipeline', pipeline_product, (record,channel,pipeline,capture_id,memory)
                 elif measure is not None:
-                    product_kind, product_fn, product_args = 'measurement', measurement_product, (record,tx,file is not None,capture_id,measure,memory,LIVE_DIGITS)
+                    product_kind, product_fn, product_args = 'measurement', measurement_product, (record,tx,file is not None,capture_id,measure,memory,LIVE_DIGITS,segment)
                 else:
                     product_kind = None
                 if product_kind is not None and (flow.product_fault != client_revision or
                                                  time.monotonic() >= flow.product_retry_at):
+                    measured = segment[1] - segment[0] if segment is not None else len(record.samples)
                     previous_product = asyncio.ensure_future(_ordered_product(
-                        previous_product, work, len(record.samples), product_kind, product_fn, client_revision, *product_args))
+                        previous_product, work, measured, product_kind, product_fn, client_revision, *product_args))
                     flow.enqueue(seq, capture_id, client_revision, previous_product)
                 else:
                     await flow.frame_end(seq, capture_id)
                 seq=(seq+1)&0x7fffffff
                 if chain_active:
                     processed = capture_id
-                # A processing chain consumes one contiguous capture per frame;
-                # the spectrum alone advances once it has shown the whole capture.
-                advance_next = chain_active or exhausted
+                # A processing chain consumes one contiguous capture per frame, a
+                # measurement once it has swept the whole record; the spectrum
+                # alone advances once it has shown the whole capture.
+                advance_next = sweep >= len(record.samples) if segment is not None else (chain_active or exhausted)
             except (ValueError,IndexError,OSError) as exc:
                 # Keep the last valid stream alive after a bad transient edit.
                 await flow.send({'type':'error','message':str(exc)[:500]})

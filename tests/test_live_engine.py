@@ -90,17 +90,20 @@ def test_every_sample_pacing_never_drops():
     assert np.all(np.diff(ids) == 1), ids
 
 
-def test_every_sample_zero_span_preserves_the_full_capture():
+def test_every_sample_zero_span_sweeps_consecutive_intervals():
+    """Every sample: sweep after sweep covers the stream without gaps, ten
+    2 ms sweeps per 20 ms capture, then the next capture."""
     with client.websocket_connect("/ws/live") as ws:
         ws.receive_json()
         ws.send_json({"action": "start", "acknowledge_frames": True, "pacing": "contiguous",
                       "tx": {"waveform": "tone", "sample_rate": 1e6, "duration": 0.02},
                       "measurement": {"offset_s": 0.001, "duration_s": 0.002}})
         metrics = _collect(ws, "metrics", 4)
-        products = _collect(ws, "measurement", 3)
+        products = _collect(ws, "measurement", 14)
     assert all(m["processed_samples"] == m["window_samples"] == 20_000 for m in metrics)
-    assert np.all(np.diff([p["capture_id"] for p in products]) == 1)
-    assert all(p["capture_start_s"] == 0.001 and not p["interval_clipped"] for p in products)
+    starts = [p["capture_start_sample"] + round(p["capture_start_s"] * 1e6) for p in products]
+    assert np.all(np.diff(starts) == 2000), starts
+    assert all(p["capture_duration_s"] == 0.002 and not p["interval_clipped"] for p in products)
 
 
 @pytest.mark.parametrize("pacing", ["contiguous", "realtime"])
@@ -138,7 +141,7 @@ def test_zero_span_and_quality_are_live_products():
         zero = _collect(ws, "measurement", 3)
         ws.send_json({"action": "update", "measurement": {"offset_s": 0, "duration_s": 0.002, "quality": True}})
         quality = [m for m in _collect(ws, "measurement", 6) if m["quality"] is not None]
-    assert all(z["quality"] is None and len(z["i"]) > 100 for z in zero)
+    assert all(z["quality"] is None and len(z["i"]) > 100 and "i_max" in z for z in zero)
     assert zero[0]["capture_start_s"] == 0.001
     assert quality and quality[-1]["quality"]["kind"] == "evm"
     assert quality[-1]["quality"]["metrics"]["evm_rms_percent"] < 8

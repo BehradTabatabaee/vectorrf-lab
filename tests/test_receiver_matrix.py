@@ -71,8 +71,7 @@ def test_short_high_rate_quality_uses_absolute_symbol_clock_and_valid_json():
                                   MeasurementSpec(quality=True, duration_s=0.002))
     assert quality["quality"]["kind"] == "evm"
     assert quality["quality"]["metrics"]["evm_rms_percent"] < 3
-    assert quality["interval_clipped"]
-    assert quality["capture_duration_s"] == pytest.approx(len(capture.samples) / rate)
+    assert quality["capture_duration_s"] == pytest.approx(len(capture.samples) / rate)  # the whole capture
     json.dumps(quality, allow_nan=False)
 
 
@@ -104,10 +103,10 @@ def test_wideband_zero_span_resolves_requested_band_without_an_enormous_fir():
     interferer = 0.5 * np.exp(2j * np.pi * 501e6 * k / rate)
     measured = zero_span((wanted + interferer).astype(np.complex64), rate,
                          duration=count / rate, center_hz=500e6, bandwidth_hz=100e3)
-    assert measured["decimation"] > 1000
+    assert rate / measured["analysis_rate"] > 1000
     assert measured["bandwidth_actual_hz"] == 100e3
     assert np.median(measured["amplitude"]) == pytest.approx(0.5, rel=0.02)
-    assert abs(np.median(measured["frequency_hz"][10:-10])) < 20
+    assert abs(np.nanmedian(measured["frequency_hz"][10:-10])) < 20
     too_narrow = zero_span(wanted.astype(np.complex64), rate,
                            duration=count / rate, center_hz=500e6, bandwidth_hz=1)
     assert too_narrow["bandwidth_actual_hz"] >= 4 * rate / count
@@ -119,18 +118,18 @@ def test_zero_span_tuning_phase_uses_absolute_capture_position():
     right = np.exp(2j * np.pi * center * (count + np.arange(count)) / rate)
     a = zero_span(left, rate, duration=count / rate, center_hz=center, start_sample=0)
     b = zero_span(right, rate, duration=count / rate, center_hz=center, start_sample=count)
-    np.testing.assert_allclose(a["i"], b["i"], atol=1e-9)
-    np.testing.assert_allclose(a["q"], b["q"], atol=1e-9)
+    np.testing.assert_allclose(a["i"], b["i"], atol=1e-6)
+    np.testing.assert_allclose(a["q"], b["q"], atol=1e-6)
 
 
 def test_zero_span_does_not_invent_frequency_after_a_signal_null():
     x = np.ones(64, dtype=np.complex64)
     x[20] = 0
     x[21:] = 1j
-    result = zero_span(x, 1000, duration=len(x) / 1000)
-    assert not result["frequency_valid"][20]
-    assert not result["frequency_valid"][21]
-    assert result["frequency_valid"][22]
+    result = zero_span(x, 1000, duration=len(x) / 1000, full_band=True)
+    f, phase = np.asarray(result["frequency_hz"], float), np.asarray(result["phase_deg"], float)
+    assert np.isnan(f[20]) and np.isnan(f[21]) and np.isnan(phase[20])
+    assert f[22] == 0 and phase[22] == pytest.approx(90)
 
 
 def test_basic_quality_masks_phase_and_frequency_during_pulse_off_time():
@@ -141,10 +140,8 @@ def test_basic_quality_masks_phase_and_frequency_during_pulse_off_time():
                                   MeasurementSpec(quality=True, duration_s=0.01))["quality"]
     assert quality["kind"] == "basic"
     telemetry = quality["telemetry"]
-    assert any(telemetry["phase_valid"])
-    assert not all(telemetry["phase_valid"])
-    assert any(telemetry["frequency_valid"])
-    assert not all(telemetry["frequency_valid"])
+    for key in ("phase_deg", "frequency_hz"):   # undefined while the pulse is off: gaps
+        assert any(v is None for v in telemetry[key]) and not all(v is None for v in telemetry[key])
     assert quality["metrics"]["mean_frequency_hz"] == pytest.approx(0, abs=1)
     json.dumps(quality, allow_nan=False)
 

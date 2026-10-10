@@ -92,8 +92,8 @@ def test_classifier_and_zero_span_are_rate_invariant(fs):
     b = classify(generate(tx).samples, fs)
     assert b.modulation == "16qam"
     assert b.symbol_rate_baud == pytest.approx(fs / 8, rel=0.01)
-    z = zero_span(np.exp(2j * np.pi * 0.123 * np.arange(20_000)), fs, duration=20_000 / fs)
-    assert np.median(z["frequency_hz"][1:]) == pytest.approx(0.123 * fs, rel=1e-9)
+    z = zero_span(np.exp(2j * np.pi * 0.123 * np.arange(20_000)), fs, duration=20_000 / fs, full_band=True)
+    assert np.nanmedian(z["frequency_hz"]) == pytest.approx(0.123 * fs, rel=1e-9)
 
 
 def test_pipeline_mixer_and_resampler_at_ghz():

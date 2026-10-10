@@ -82,11 +82,15 @@ def test_cma_reduces_constant_modulus_error():
 
 
 def test_zero_span_frequency_before_plot_reduction():
+    """Detection runs on every sample; a display bucket shows the extremes of
+    its samples, so a steady 170 kHz reads 170 kHz however few points are drawn."""
     fs=1e6;f=170000;t=np.arange(16000)/fs
     z=np.exp(2j*np.pi*f*t)
-    d=zero_span(z,fs,duration=.016,max_points=100)
+    d=zero_span(z,fs,duration=.016,full_band=True,points=100)
+    assert len(d['frequency_hz'])==len(d['frequency_hz_max'])==len(d['time_s'])==100
     np.testing.assert_allclose(d['frequency_hz'][1:],f,atol=.01)
-    assert d['time_s'][-1]==pytest.approx(15999/fs)
+    np.testing.assert_allclose(d['frequency_hz_max'],f,atol=.01)
+    assert d['time_s'][0]==pytest.approx(79.5/fs) and d['time_s'][-1]==pytest.approx(15919.5/fs)
 
 
 def test_source_is_shared_immutable_and_revisioned():

@@ -87,11 +87,14 @@ def test_zero_span_default_payload_is_display_bounded_and_frequency_is_correct_a
     n = int(.004 * fs)
     t = np.arange(n) / fs
     x = np.exp(2j * np.pi * f0 * t)
-    out = zero_span(x, fs, duration=.004)
+    out = zero_span(x, fs, duration=.004, full_band=True)
     assert len(out['i']) <= 900
-    assert len(out['i']) == len(out['q']) == len(out['frequency_hz']) == len(out['valid'])
-    measured = np.asarray(out['frequency_hz'])[np.asarray(out['valid'], dtype=bool)]
-    assert np.median(measured[1:]) == pytest.approx(f0, abs=1.0)
+    assert len(out['i']) == len(out['q']) == len(out['frequency_hz']) == len(out['i_max']) == len(out['time_s'])
+    assert np.nanmedian(out['frequency_hz']) == pytest.approx(f0, abs=1.0)
+    # Tuned to the tone, the default RBW reads a steady carrier at 0 Hz.
+    tuned = zero_span(x, fs, duration=.004, center_hz=f0)
+    assert np.nanmax(np.abs(tuned['frequency_hz_max'])) < 1.0
+    assert np.median(tuned['amplitude']) == pytest.approx(1.0, rel=1e-3)
 
 
 def test_direct_api_rejects_oversized_span_without_poisoning_live_websocket_state():

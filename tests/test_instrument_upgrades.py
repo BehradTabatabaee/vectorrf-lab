@@ -213,11 +213,14 @@ def test_measurement_quality_dehops_continuous_hopping():
 def test_zero_span_tunes_and_band_limits():
     fs, n = 1e6, 20_000
     x = _tones(fs, n, [100e3]) + _tones(fs, n, [300e3], amp=0.5)
-    plain = zero_span(x, fs, 0.002, 0.004)
+    plain = zero_span(x, fs, 0.002, 0.004, full_band=True)
     tuned = zero_span(x, fs, 0.002, 0.004, center_hz=100e3, bandwidth_hz=50e3)
-    assert np.std(plain['amplitude']) > 0.2  # two tones beat
-    assert np.std(tuned['amplitude']) < 0.01 and np.median(tuned['amplitude']) == pytest.approx(0.5, rel=0.01)
-    assert np.allclose(tuned['frequency_hz'][1:], 0.0, atol=50) and tuned['center_hz'] == 100e3
+    assert np.max(plain['amplitude_max']) - np.min(plain['amplitude']) > 0.6  # two tones beat
+    # The 100 kHz tone alone, steady; the 300 kHz one is 200 kHz = 4 RBW away.
+    inner = slice(30, -30)   # the RBW filter settles at the edges of the record
+    low, high = np.asarray(tuned['amplitude'][inner]), np.asarray(tuned['amplitude_max'][inner])
+    assert high.max() - low.min() < 0.01 and np.median(low) == pytest.approx(0.5, rel=0.01)
+    assert np.allclose(tuned['frequency_hz'][inner], 0.0, atol=50) and tuned['center_hz'] == 100e3
 
 
 # --------------------------------------------------------------- classifier --
@@ -369,7 +372,7 @@ def test_live_receiver_frames_round_plot_traces_but_rest_stays_exact():
     # REST measurements are not display-rounded: a zero-span frequency keeps full resolution.
     fs, f0 = 10e6, 1_234_567.0
     x = np.exp(2j * np.pi * f0 * np.arange(20_000) / fs)
-    out = zero_span(x, fs, 0, 1e-3)
+    out = zero_span(x, fs, 0, 1e-3, full_band=True)
     assert np.median(out["frequency_hz"][1:]) == pytest.approx(f0, abs=1e-3)
 
 

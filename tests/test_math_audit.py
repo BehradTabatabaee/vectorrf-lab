@@ -252,8 +252,8 @@ def test_fm_uses_the_exact_phase_integral():
     t = np.arange(len(y)) / 1e6
     expected = np.exp(1j * (20_000 / 1_000) * (1 - np.cos(2 * np.pi * 1_000 * t)))
     np.testing.assert_allclose(y, expected, atol=2e-6)
-    inst = zero_span(y, 1e6, duration=.004)["frequency_hz"]
-    assert np.max(np.abs(inst[1:])) == pytest.approx(20_000, rel=2e-3)
+    inst = zero_span(y, 1e6, duration=.004, full_band=True)
+    assert np.nanmax(np.abs(np.r_[inst["frequency_hz"], inst["frequency_hz_max"]])) == pytest.approx(20_000, rel=2e-3)
 
 
 def test_ssb_is_one_sided_without_record_edge_ringing():

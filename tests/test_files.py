@@ -330,9 +330,10 @@ def test_file_capture_windows_are_contiguous_and_shared_by_observers(client, lib
     x = _signal(100_000)
     (library / "w.cf32").write_bytes(x.tobytes())
     src = {"name": "w.cf32", "sample_rate": fs, "capture_samples": 10_000, "start_sample": 500}
-    a = client.post("/api/measurements", json={"source": src, "capture_id": 3, "duration_s": 10_000 / fs}).json()
+    a = client.post("/api/measurements", json={"source": src, "capture_id": 3, "duration_s": 10_000 / fs, "full_band": True}).json()
     assert a["capture_start_sample"] == 500 + 3 * 10_000
-    np.testing.assert_allclose(a["i"][0], x[30_500].real, atol=1e-7)
+    # The first display bucket holds the first 16 of the 10,000 samples.
+    np.testing.assert_allclose([a["i"][0], a["i_max"][0]], [x[30_500:30_516].real.min(), x[30_500:30_516].real.max()], atol=1e-7)
     tail = client.post("/api/measurements", json={"source": src, "capture_id": 10, "duration_s": 1e-3}).json()
     assert tail["capture_start_sample"] == (500 + 100_000) % 100_000  # loops by default
     stop = client.post("/api/measurements", json={"source": {**src, "loop": False}, "capture_id": 10}).json()
