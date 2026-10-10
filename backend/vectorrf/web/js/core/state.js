@@ -49,7 +49,7 @@ export function initState(defaults) {
              rfAxis: true, hold: false, traceAverage: 16,
              traces: [{mode: 'clear', y: null}, {mode: 'off', y: null}, {mode: 'off', y: null}, {mode: 'off', y: null}],
              markers: [], activeMarker: -1, memories: [], selection: null},
-    measurement: {offset_s: 0, duration_s: 0.002, center_hz: 0, bandwidth_hz: null, tuned: false},
+    measurement: {offset_s: 0, duration_s: 0.002, center_hz: 0, autoRbw: true, bandwidth_hz: 100e3, full_band: false, component: 0},
     rx: {...d.rx, modulation: 'qpsk', sample_rate: 1e6, symbol_rate: 50e3, timing_recovery: 'mueller-muller',
          coarse_cfo: true},
     rxUi: {page: 'monitor', follow: true, dehop: true, component: 0, output: null, syncSpeed: 1, syncWindow: 180, syncPause: false,

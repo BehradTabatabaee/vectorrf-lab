@@ -128,6 +128,34 @@ export function trace(ctx, X, Y, y, x, color, {width = 1.2, from = 0, to = y.len
   ctx.setLineDash([]);
 }
 
+/**
+ * The band between ``lo`` and ``hi`` (one pair per point): a min/max trace, as
+ * an oscilloscope's peak detect draws a signal faster than its display.  The
+ * outline keeps a band that has collapsed to a line visible.
+ */
+export function band(ctx, X, Y, lo, hi, x, color) {
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  const ok = k => Number.isFinite(lo[k]) && Number.isFinite(hi[k]);
+  for (let i = 0, n = lo.length; i < n;) {
+    while (i < n && !ok(i)) i++;
+    let j = i;
+    while (j < n && ok(j)) j++;
+    if (j > i) {
+      ctx.beginPath();
+      for (let k = i; k < j; k++) ctx.lineTo(X(x ? x[k] : k), Y(hi[k]));
+      for (let k = j - 1; k >= i; k--) ctx.lineTo(X(x ? x[k] : k), Y(lo[k]));
+      ctx.closePath();
+      ctx.globalAlpha = 0.4;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.stroke();
+    }
+    i = j;
+  }
+}
+
 export function finiteRange(...arrays) {
   let lo = Infinity, hi = -Infinity;
   for (const a of arrays) for (const v of a || []) if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
@@ -137,7 +165,8 @@ export function finiteRange(...arrays) {
 }
 
 /**
- * Line plot.  ``series``: array, or list of {y, x?, color?, dash?}.
+ * Line plot.  ``series``: array, or list of {y, y2?, x?, color?, dash?}; with
+ * ``y2`` the series is a band from ``y`` (low) to ``y2`` (high) per point.
  * Options: x, xUnit, yUnit, min, max, threshold, cursor (x value), shade [{x0,x1,color}], pad (fraction).
  */
 export function linePlot(canvas, series, opts = {}) {
@@ -149,7 +178,7 @@ export function linePlot(canvas, series, opts = {}) {
     ? series : [{y: series}]).filter(item => item.y?.length);
   const c = colors();
   if (!list.length) return null;
-  let [lo, hi] = finiteRange(...list.map(item => item.y), Number.isFinite(opts.threshold) ? [opts.threshold] : []);
+  let [lo, hi] = finiteRange(...list.map(item => item.y), ...list.map(item => item.y2), Number.isFinite(opts.threshold) ? [opts.threshold] : []);
   const pad = opts.pad ?? 0.06;
   const span = hi - lo;
   lo = opts.min ?? lo - span * pad;
@@ -167,7 +196,11 @@ export function linePlot(canvas, series, opts = {}) {
   ctx.beginPath();
   ctx.rect(g.m.left, g.m.top, g.pw, g.ph);
   ctx.clip();
-  list.forEach((item, i) => trace(ctx, g.X, g.Y, item.y, item.x || opts.x, item.color || [c.accent, c.cyan, c.violet, c.green][i % 4], {dash: item.dash}));
+  list.forEach((item, i) => {
+    const color = item.color || [c.accent, c.cyan, c.violet, c.green][i % 4];
+    if (item.y2) band(ctx, g.X, g.Y, item.y, item.y2, item.x || opts.x, color);
+    else trace(ctx, g.X, g.Y, item.y, item.x || opts.x, color, {dash: item.dash});
+  });
   if (Number.isFinite(opts.threshold)) {
     ctx.strokeStyle = c.red;
     ctx.setLineDash([5, 4]);

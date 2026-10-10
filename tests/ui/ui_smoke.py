@@ -260,7 +260,20 @@ def check_spectrum(t: Session):
     previous = t.state("s.measurement.offset_s")
     t.fill("measurement.offset_s", "garbage")
     assert t.state("s.measurement.offset_s") == previous
-    t.page.check("[data-bind='measurement.tuned']")
+    # Analyzer-style zero span: tuned, auto RBW, calibrated level.
+    t.page.wait_for_function("/RBW \(auto\)/.test(document.getElementById('zTune')?.textContent || '')", timeout=10000)
+    t.page.wait_for_function("/dBm/.test(document.getElementById('zLevel')?.textContent || '')", timeout=10000)
+    # Every sample sweeps consecutive intervals of the stream.
+    t.page.click("[data-action='pacing'][data-pacing='contiguous']")
+    sweeps = set()
+    for _ in range(40):
+        sweeps.add(t.page.inner_text("#zInterval"))
+        t.page.wait_for_timeout(100)
+    assert len(sweeps) >= 3, sweeps
+    t.page.click("[data-action='pacing'][data-pacing='realtime']")
+    t.page.check("[data-bind='measurement.full_band']")
+    t.page.wait_for_function("/full band/.test(document.getElementById('zTune')?.textContent || '')", timeout=10000)
+    t.page.uncheck("[data-bind='measurement.full_band']")
     center_before = t.page.input_value("[data-bind='measurement.center_hz']")
     t.fill("measurement.center_hz", "700k")
     t.page.wait_for_function("document.getElementById('zCapture')?.textContent === 'Unavailable'", timeout=15000)
@@ -491,7 +504,7 @@ def check_rapid_view_changes(t: Session):
         t.mode("spectrum")
         t.page.click("#specMain [data-page='zero']")
     t.advances("zCapture", at_least=2)
-    assert t.page.inner_text("#zRms") not in ("—", "NaN", "undefined")
+    t.page.wait_for_function("/dBm/.test(document.getElementById('zLevel')?.textContent || '')", timeout=10000)
 
 
 def check_help(page: Page, base: str):

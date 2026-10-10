@@ -94,7 +94,10 @@ export function txRequest() {
     // A receiver gets captures long enough to hold symbols (fewer updates per
     // second at extreme oversampling); every other view the 1/30 s window.
     const floor = demodulating() ? Math.min(symbolFloor(cfg), state.limits.max_capture_samples) : 0;
-    const window = Math.max(liveLimit(cfg.sample_rate), floor) / cfg.sample_rate;
+    // A zero-span sweep is measured whole, however long.
+    const sweep = state.mode === 'spectrum' && state.specUi?.page === 'zero'
+      ? Math.min(Math.ceil((Number(state.measurement.offset_s) + Number(state.measurement.duration_s)) * cfg.sample_rate), state.limits.max_capture_samples) : 0;
+    const window = Math.max(liveLimit(cfg.sample_rate), floor, sweep) / cfg.sample_rate;
     if (cfg.duration > window) {
       // A shorter live window shows slices of the same stream; only a chirp whose
       // sweep period is "the capture length" depends on it, so pin that period.

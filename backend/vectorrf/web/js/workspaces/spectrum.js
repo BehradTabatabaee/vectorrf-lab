@@ -103,13 +103,24 @@ function channelsSection() {
 
 function zeroSections() {
   const m = state.measurement, off = axisOffset();
-  return section('Zero-span tuning', toggleField('Tune and band-limit before detection', 'measurement.tuned')
-      + (m.tuned ? numberField('Centre', 'measurement.center_hz', {unit: 'Hz', offset: off}) + numberField('Bandwidth', 'measurement.bandwidth_hz', {unit: 'Hz', min: 1, value: m.bandwidth_hz ?? Math.min(activeRate() / 4, 100e3)})
-        + '<button class="btn small" data-action="zero-from-marker">Centre = active marker</button>' : ''),
-    {id: 'zero-tune', help: 'Like an analyzer in zero span: the record is mixed to the centre frequency and limited to the bandwidth (a linear-phase FIR) before the AM, PM and FM detectors. Off: the full-band samples are detected directly.'})
-    + section('Interval', numberField('Offset', 'measurement.offset_s', {unit: 's', min: 0})
-      + numberField('Length', 'measurement.duration_s', {unit: 's', min: 1e-7, max: 1})
-      + `<div class="btn-row"><button class="btn small${state.specUi.zeroHold ? ' on' : ''}" data-action="zero-hold">${state.specUi.zeroHold ? 'Resume live' : 'Hold capture'}</button></div>`, {id: 'zero-interval'});
+  return section('Tuning', numberField('Centre', 'measurement.center_hz', {unit: 'Hz', offset: off})
+      + '<div class="btn-row"><button class="btn small" data-action="zero-from-marker">Centre = marker</button><button class="btn small" data-action="zero-from-center">Centre = spectrum centre</button></div>'
+      + toggleField('Full band (no RBW filter)', 'measurement.full_band')
+      + (m.full_band ? '' : toggleField('Auto RBW', 'measurement.autoRbw')
+        + (m.autoRbw ? '' : numberField('RBW', 'measurement.bandwidth_hz', {unit: 'Hz', min: 1}))),
+    {id: 'zero-tune', help: 'Like an analyzer in zero span, the signal at the centre frequency passes a Gaussian resolution-bandwidth filter before the AM, PM and FM detectors. Auto RBW is the bandwidth the display resolves (300 / sweep time); a narrower RBW lowers the noise, a wider one shows faster changes. Full band detects every sampled frequency at once.'})
+    + section('Sweep', numberField('Sweep time', 'measurement.duration_s', {unit: 's', min: 1e-7, max: 1})
+      + numberField('Offset', 'measurement.offset_s', {unit: 's', min: 0, help: 'Real time: where each sweep starts in its capture. Every sample sweeps consecutive intervals of the stream and ignores the offset.'})
+      + `<div class="btn-row"><button class="btn small${state.specUi.zeroHold ? ' on' : ''}" data-action="zero-hold">${state.specUi.zeroHold ? 'Resume live' : 'Hold sweep'}</button></div>`,
+    {id: 'zero-interval', help: 'Real time shows the newest sweep and skips the samples in between, like an analyzer re-triggering; Every sample sweeps the stream end to end, slower than real time when sweeps are short.'});
+}
+
+function qualitySections() {
+  const t = appliedTx();
+  if (t.waveform !== 'composite') return '';
+  return section('Measure', selectField('Component', 'measurement.component',
+    t.components.map((c, i) => [i, `${i + 1} · ${c.label || c.waveform}${c.enabled ? '' : ' (off)'}`])),
+  {id: 'quality-component', help: 'Modulation quality measures one component of a composite: tuned to it, with the others as adjacent signals.'});
 }
 
 function dockHTML() {
@@ -117,6 +128,7 @@ function dockHTML() {
   let body = section('Source', sourceSection(), {id: 'spec-source'});
   if (page === 'sweep') body += frequencySection() + amplitudeSection() + markersSection() + channelsSection() + bandwidthSection() + tracesSection();
   else if (page === 'zero') body += zeroSections();
+  else if (page === 'quality') body += qualitySections();
 
   return body;
 }
@@ -131,7 +143,7 @@ function mainHTML() {
       + analyzerMarkup({waterfall: state.specUi.waterfall, tools: '<button class="btn small ghost" data-action="marker-peak" title="Peak search (P)">Peak</button><button class="btn small ghost" data-action="marker-add">+ Mkr</button><button class="btn small ghost" data-action="full-span" title="Full span (F)">Full</button>'});
   }
   if (page === 'zero') {
-    return views(PAGES, page, 'page') + `<div class="readout-bar">${readout('Capture', 'zCapture')}${readout('Interval', 'zInterval')}${readout('RMS', 'zRms')}${readout('Peak', 'zPeak')}${readout('Tuning', 'zTune', '—', 'grow')}</div>`
+    return views(PAGES, page, 'page') + `<div class="readout-bar">${readout('Capture', 'zCapture')}${readout('Sweep', 'zInterval')}${readout('Level', 'zLevel', '—', 'accent')}${readout('Frequency', 'zFreq')}${readout('Tuning', 'zTune', '—', 'grow')}</div>`
       + `<div class="stage quad">${pane('I / Q', 'zeroIQ')}${pane('AM · envelope', 'zeroAM')}${pane('PM · unwrapped phase', 'zeroPM')}${pane('FM · instantaneous frequency', 'zeroFM')}</div>`;
   }
   return views(PAGES, page, 'page') + `<div class="readout-bar">${readout('EVM', 'qEvm', '—', 'accent')}${readout('EVM peak', 'qPeak')}${readout('MER', 'qMer')}${readout('Record', 'qAll')}${readout('Capture', 'qCapture')}${readout('Method', 'qMethod', '—', 'grow')}</div>`
@@ -258,8 +270,9 @@ const actions = {
   'zero-hold': () => { state.specUi.zeroHold = !state.specUi.zeroHold; renderDock(); liveUpdate(true); },
   'zero-from-marker': () => {
     const m = state.specUi.markers[state.specUi.activeMarker];
-    if (m) { state.measurement.center_hz = m.hz; renderDock(); liveUpdate(true); } else toast('Place a marker in the Spectrum view first');
+    if (m) { state.measurement.center_hz = m.hz; measurementChanged(); } else toast('Place a marker in the Spectrum view first');
   },
+  'zero-from-center': () => { state.measurement.center_hz = Number(state.spectrum.center_hz) || 0; measurementChanged(); },
 };
 
 function toggleMarker(kind) {
@@ -291,7 +304,7 @@ function onChange(path) {
   if (path.startsWith('specUi.traces')) { host?.analyzer.resetTraces(); host?.analyzer.render(); return; }
   if (path.startsWith('specUi.markers')) { host?.analyzer.changed(); if (path.endsWith('.ref') || path.endsWith('.trace')) replaceSection('spec-markers', markersSection()); return; }
   if (path.startsWith('specUi.')) { host?.analyzer.render(); return; }
-  if (path.startsWith('measurement.')) { if (path === 'measurement.tuned') renderDock(); liveUpdate(true); }
+  if (path.startsWith('measurement.')) measurementChanged(path === 'measurement.full_band' || path === 'measurement.autoRbw');
 }
 
 /* ------------------------------------------------------------ readouts -- */
@@ -316,13 +329,57 @@ function updateReadouts() {
    each capture it shows (at the display rate, dropping what it cannot
    process in real time) and sends the result with the frame. */
 function measurementRequest() {
-  const m = state.measurement;
-  return {offset_s: m.offset_s, duration_s: m.duration_s, quality: state.specUi.page === 'quality',
-    ...(m.tuned ? {center_hz: m.center_hz, bandwidth_hz: m.bandwidth_hz ?? Math.min(activeRate() / 4, 100e3)} : {})};
+  const m = state.measurement, quality = state.specUi.page === 'quality';
+  return {offset_s: m.offset_s, duration_s: m.duration_s, quality, center_hz: Number(m.center_hz) || 0,
+    full_band: !!m.full_band, bandwidth_hz: m.full_band || m.autoRbw ? null : m.bandwidth_hz,
+    ...(quality && appliedTx().waveform === 'composite' ? {component: Number(m.component) || 0} : {})};
 }
 
 function measuring() {
   return state.specUi.page !== 'sweep' && !(state.specUi.zeroHold && state.specUi.page === 'zero');
+}
+
+function measurementChanged(redock = true) {
+  if (redock) renderDock();
+  held = {};
+  liveUpdate(true);
+}
+
+/* Axis ranges that hold still: a range grows at once to show new extremes and
+   shrinks only after the data have used less than a third of it for a second,
+   so a steady trace does not jump with every sweep's noise. */
+let held = {};
+function steady(key, lo, hi) {
+  const h = held[key];
+  if (!h || lo < h.lo || hi > h.hi) return (held[key] = {lo, hi, small: 0});
+  h.small = hi - lo < (h.hi - h.lo) / 3 ? h.small + 1 : 0;
+  if (h.small > 30) return (held[key] = {lo, hi, small: 0});
+  return h;
+}
+
+/** A min/max band series (``key`` and ``key_max``) or a plain line. */
+function series(d, key, extra = {}) {
+  return d[`${key}_max`] ? {y: d[key], y2: d[`${key}_max`], ...extra} : {y: d[key], ...extra};
+}
+
+/** Finite extremes of the given arrays. */
+function extent(...arrays) {
+  let lo = Infinity, hi = -Infinity;
+  for (const a of arrays) for (const v of a || []) if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  return Number.isFinite(lo) ? [lo, hi] : null;
+}
+
+/** Steady axis for ``key``: the data's extent widened to ``minSpan`` around its middle and padded. */
+function axis(key, arrays, minSpan, {zero = false, symmetric = false} = {}) {
+  const e = extent(...arrays);
+  if (!e) return {};
+  let [lo, hi] = e;
+  if (symmetric) { const a = Math.max(Math.abs(lo), Math.abs(hi)); lo = -a; hi = a; }
+  if (zero) lo = Math.min(0, lo);
+  if (hi - lo < minSpan) { const mid = zero ? minSpan / 2 : (lo + hi) / 2; lo = zero ? 0 : mid - minSpan / 2; hi = mid + minSpan / 2; }
+  const pad = (hi - lo) * 0.08;
+  const r = steady(key, zero ? lo : lo - pad, hi + pad);
+  return {min: r.lo, max: r.hi};
 }
 
 function drawMeasurement() {
@@ -330,42 +387,51 @@ function drawMeasurement() {
   if (!d || !root) return;
   if (state.specUi.page === 'zero' && d.interval_clipped) {
     const changed = state.measurement.offset_s !== d.capture_start_s || state.measurement.duration_s !== d.capture_duration_s;
-    state.measurement.offset_s = d.capture_start_s;
+    if (state.pacing === 'realtime') state.measurement.offset_s = d.capture_start_s;
     state.measurement.duration_s = d.capture_duration_s;
-    if (changed) { renderDock(); toast('Zero-span interval shortened to the captured window'); }
+    if (changed) { renderDock(); toast('Sweep shortened to the captured window'); }
   }
   setText(state.specUi.page === 'zero' ? 'zCapture' : 'qCapture', `#${d.capture_id}`);
   if (state.specUi.page === 'zero') {
-    const x = {x: d.time_s, xUnit: 's'};
-    linePlot($('#zeroIQ'), [{y: d.i}, {y: d.q}], x);
-    linePlot($('#zeroAM'), d.amplitude, {...x, min: 0});
-    linePlot($('#zeroPM'), d.phase_deg.map((v, i) => (d.valid[i] ? v : NaN)), {...x, yUnit: '°'});
-    linePlot($('#zeroFM'), d.frequency_hz.map((v, i) => ((d.frequency_valid || d.valid)[i] ? v : NaN)), {...x, yUnit: 'Hz'});
+    const x = {x: d.time_s, xUnit: 's'}, off = axisOffset();
+    const peak = Math.max(d.peak || 0, 1e-12);
+    const rbw = d.bandwidth_actual_hz || d.analysis_rate / 10;
+    linePlot($('#zeroIQ'), [series(d, 'i'), series(d, 'q')], {...x, ...axis('iq', [d.i, d.i_max, d.q, d.q_max], 2 * peak, {symmetric: true})});
+    linePlot($('#zeroAM'), [series(d, 'amplitude')], {...x, ...axis('am', [d.amplitude, d.amplitude_max], peak, {zero: true})});
+    linePlot($('#zeroPM'), [series(d, 'phase_deg')], {...x, yUnit: '°', ...axis('pm', [d.phase_deg, d.phase_deg_max], 20)});
+    linePlot($('#zeroFM'), [series(d, 'frequency_hz')], {...x, yUnit: 'Hz', ...axis('fm', [d.frequency_hz, d.frequency_hz_max], rbw)});
     setText('zInterval', `${fmt(d.capture_start_s, 's')} + ${fmt(d.capture_duration_s, 's')}`);
-    setText('zRms', fmt(d.rms));
-    setText('zPeak', fmt(d.peak));
-    setText('zTune', d.bandwidth_hz
-      ? `${fmtFreq(d.center_hz + axisOffset(), 1)} · ${fmt(d.bandwidth_actual_hz ?? d.bandwidth_hz, 'Hz')} RBW${d.bandwidth_actual_hz > d.bandwidth_hz * 1.01 ? ' (capture limited)' : ''}`
-      : 'full band');
+    setText('zLevel', d.level_db == null ? '—' : `${d.level_db.toFixed(2)} ${d.level_unit}`);
+    setText('zFreq', d.mean_frequency_hz == null ? '—' : fmtFreq(settled(d.center_hz + d.mean_frequency_hz + off, rbw / 1e4), Math.max(1e-3, rbw / 1e4)));
+    setText('zTune', d.full_band ? `${fmtFreq(d.center_hz + off, 1)} · full band`
+      : `${fmtFreq(d.center_hz + off, 1)} · ${fmt(d.bandwidth_actual_hz, 'Hz')} RBW${d.bandwidth_auto ? ' (auto)' : ''}`
+        + (d.bandwidth_hz && d.bandwidth_actual_hz > d.bandwidth_hz * 1.01 ? ' (limited by the sweep time)' : ''));
     return;
   }
   const q = d.quality;
   if (!q) return;
   if (q.kind === 'basic') {
     // No symbols to measure: the same four panes show the waveform itself.
-    paneTitles(['I/Q trajectory', 'Envelope', 'Instantaneous frequency', 'Unwrapped phase']);
-    const t = q.telemetry, x = t.time_s ? {x: t.time_s, xUnit: 's'} : {};
+    paneTitles(['I/Q trajectory', 'Envelope', 'Instantaneous frequency', 'Phase']);
+    readoutLabels(['Frequency', 'Freq. spread', 'AM', 'RMS']);
+    const t = q.telemetry, x = t.time_s ? {x: t.time_s, xUnit: 's'} : {}, m = q.metrics;
+    const spread = m.bandwidth_hz || m.analysis_rate / 10;
     scatter($('#qualityConst'), q.symbols?.i, q.symbols?.q);
-    linePlot($('#qualityEvm'), t.amplitude || [], {...x, min: 0});
-    linePlot($('#qualityMag'), (t.frequency_hz || []).map((v, i) => t.frequency_valid?.[i] === false ? NaN : v), {...x, yUnit: 'Hz'});
-    linePlot($('#qualityPhase'), (t.phase_deg || []).map((v, i) => t.phase_valid?.[i] === false ? NaN : v), {...x, yUnit: '°'});
-    setText('qEvm', '—'); setText('qPeak', fmt(q.metrics.peak)); setText('qMer', '—'); setText('qAll', '—');
+    linePlot($('#qualityEvm'), [series(t, 'amplitude')], {...x, ...axis('q-am', [t.amplitude, t.amplitude_max], m.peak || 1e-12, {zero: true})});
+    linePlot($('#qualityMag'), [series(t, 'frequency_hz')], {...x, yUnit: 'Hz', ...axis('q-fm', [t.frequency_hz, t.frequency_hz_max], spread)});
+    linePlot($('#qualityPhase'), [series(t, 'phase_deg')], {...x, yUnit: '°', ...axis('q-pm', [t.phase_deg, t.phase_deg_max], 20)});
+    setText('qEvm', m.mean_frequency_hz == null ? '—' : fmtFreq(settled(m.center_hz + m.mean_frequency_hz + axisOffset(), 1e-3), 1e-3));
+    setText('qPeak', m.frequency_std_hz == null ? '—' : fmt(m.frequency_std_hz, 'Hz'));
+    setText('qMer', m.am_percent == null ? '—' : fmt(m.am_percent, '%'));
+    setText('qAll', fmt(m.rms));
     setText('qualityEvmValue', '');
   } else {
     paneTitles(['Constellation', 'EVM vs symbol', 'Magnitude error', 'Phase error']);
+    readoutLabels(['EVM', 'EVM peak', 'MER', 'Record']);
     const m = q.metrics, settle = q.telemetry.evm_settle_index || 0;
     const shade = settle ? [{x0: 0, x1: settle, color: 'rgba(236,123,114,.10)'}] : [];
-    scatter($('#qualityConst'), q.symbols?.i, q.symbols?.q, {ideals: idealConstellation(appliedTx().waveform, appliedTx())});
+    const design = q.component != null ? appliedTx().components[q.component] || appliedTx() : appliedTx();
+    scatter($('#qualityConst'), q.symbols?.i, q.symbols?.q, {ideals: idealConstellation(design.waveform, design)});
     linePlot($('#qualityEvm'), q.telemetry.evm_time_percent || [], {min: 0, yUnit: '%', shade});
     linePlot($('#qualityMag'), q.telemetry.magnitude_error_percent || [], {yUnit: '%', shade});
     linePlot($('#qualityPhase'), q.telemetry.phase_error_deg || [], {yUnit: '°', shade});
@@ -376,6 +442,19 @@ function drawMeasurement() {
     setText('qualityEvmValue', settle ? 'shaded: loop acquisition (excluded)' : 'most recent symbols on the right');
   }
   setText('qMethod', q.method);
+}
+
+/** ``value`` with a magnitude below half the readout ``resolution`` shown as 0 (not −0). */
+function settled(value, resolution) {
+  return Math.abs(value) < resolution / 2 ? 0 : value;
+}
+
+/** Labels of the quality readouts (their meaning depends on the signal). */
+function readoutLabels(labels) {
+  ['qEvm', 'qPeak', 'qMer', 'qAll'].forEach((id, i) => {
+    const label = document.getElementById(id)?.previousElementSibling;
+    if (label && label.textContent !== labels[i]) label.textContent = labels[i];
+  });
 }
 
 /** Titles of the four quality panes (their content depends on the signal). */
@@ -392,7 +471,7 @@ function measurementError(error) {
   if (state.specUi.page === 'zero') {
     for (const id of ['zeroIQ', 'zeroAM', 'zeroPM', 'zeroFM']) linePlot($(`#${id}`), []);
     setText('zCapture', 'Unavailable');
-    for (const id of ['zInterval', 'zRms', 'zPeak', 'zTune']) setText(id, '—');
+    for (const id of ['zInterval', 'zLevel', 'zFreq', 'zTune']) setText(id, '—');
   } else {
     scatter($('#qualityConst'), [], []);
     for (const id of ['qualityEvm', 'qualityMag', 'qualityPhase']) linePlot($(`#${id}`), []);
@@ -438,6 +517,7 @@ document.addEventListener('click', event => {
   if (!tab || state.mode !== 'spectrum') return;
   state.specUi.page = tab.dataset.page;
   measurement = null;  // zero span and quality products differ: wait for the new page's
+  held = {};
   stop();
   render(root);
   start();
