@@ -2,6 +2,19 @@
 
 All notable changes to VectorRF Lab. Versions follow [semantic versioning](https://semver.org/).
 
+## 2.1.1 — 2026-10-10
+
+### Modulation quality
+
+- Each update measures a fixed amount, as a zero-span sweep does: 512 new symbols (1,024 for OQPSK), or what fits in 262,144 samples at high oversampling, in 7–15 ms. It used to take as much as fitted in 75 % of a frame, so it ran at the edge of the frame budget and dropped to half the rate on a busier or slower machine. The 2,048-symbol record fills over four updates, and every sample sweeps captures in segments of the same size.
+- Each update's symbols join the record fitted to the constellation, so the record reads what its blocks read.
+
+### Receiver
+
+- Dense constellations keep their lock from block to block. A tracked block inherits the amplitude scale and refines it gently (its own fit could settle on another match of the rings, 0.81 of the scale for 16-QAM); the carrier phase is refined only across real gaps, and the frequency correction it implies is weighed against the loop's averaging time (between contiguous blocks a fraction of a degree had become hundreds of hertz); APSK's inner-ring phase uses 256 symbols. 64-QAM in short blocks lost lock within a few and acquired again at 50–200 ms a block; it holds 1.1 % EVM.
+- Faster decisions: square QAM is sliced by rounding, other constellations by one matrix product, and the carrier loop's per-symbol decision no longer searches every point in Python. A 64-QAM quality update takes 15 ms (66 ms).
+- Records of 65,536 samples and more are decimated in parallel blocks, identical to one call and two to four times faster.
+
 ## 2.1.0 — 2026-10-10
 
 ### Zero span
