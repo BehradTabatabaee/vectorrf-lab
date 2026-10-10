@@ -79,14 +79,49 @@ def reference_constellation(modulation: str, ratio2: float = 2.85, ratio3: float
     return map_bits(all_bits, modulation, ratio2, ratio3)
 
 
+def square_grid(refs: np.ndarray):
+    """``(levels, table)`` when ``refs`` is a square grid (square QAM): the
+    common I/Q levels and the index of each (I level, Q level) point;
+    otherwise None."""
+    refs = np.asarray(refs)
+    levels = np.unique(np.round(refs.real, 9))
+    side = len(levels)
+    if side < 2 or side * side != refs.size or not np.allclose(np.unique(np.round(refs.imag, 9)), levels):
+        return None
+    if not np.allclose(np.diff(levels), levels[1] - levels[0]):
+        return None
+    step = levels[1] - levels[0]
+    i = np.rint((refs.real - levels[0]) / step).astype(int)
+    q = np.rint((refs.imag - levels[0]) / step).astype(int)
+    table = np.empty((side, side), dtype=np.int64)
+    table[i, q] = np.arange(refs.size)
+    return levels, table
+
+
 def _nearest(z: np.ndarray, refs: np.ndarray) -> np.ndarray:
-    """Index of the nearest reference point, evaluated in bounded memory."""
+    """Index of the nearest reference point, evaluated in bounded memory.
+
+    A square grid is sliced by rounding I and Q; otherwise the distances come
+    from one matrix product, |z - r|² = |z|² - 2 Re(z r*) + |r|² (|z|² does
+    not change the nearest point)."""
     z = np.asarray(z)
-    out = np.empty(z.size, dtype=np.int64)
-    chunk = max(1, 2_000_000 // max(1, refs.size))
-    for start in range(0, z.size, chunk):
-        part = z[start:start + chunk]
-        out[start:start + chunk] = np.argmin(np.abs(part[:, None] - refs[None, :]) ** 2, axis=1)
+    refs = np.asarray(refs)
+    grid = square_grid(refs)
+    if grid is not None:
+        levels, table = grid
+        step, side = levels[1] - levels[0], len(levels)
+        i = np.clip(np.rint((z.real - levels[0]) / step), 0, side - 1).astype(np.int64)
+        q = np.clip(np.rint((z.imag - levels[0]) / step), 0, side - 1).astype(np.int64)
+        return table[i, q].reshape(z.shape).ravel()
+    flat = z.ravel()
+    points = np.stack([refs.real, refs.imag]).astype(np.float64)       # 2 × M
+    power = np.sum(points ** 2, axis=0)
+    out = np.empty(flat.size, dtype=np.int64)
+    chunk = max(1, 4_000_000 // max(1, refs.size))
+    for start in range(0, flat.size, chunk):
+        part = flat[start:start + chunk]
+        dot = np.stack([part.real, part.imag], axis=1).astype(np.float64) @ points
+        out[start:start + chunk] = np.argmin(power[None, :] - 2.0 * dot, axis=1)
     return out
 
 

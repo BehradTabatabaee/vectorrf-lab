@@ -299,11 +299,11 @@ def resample(x: np.ndarray, up: int, down: int, window=("kaiser", 10.0)) -> np.n
     """
     g = math.gcd(int(up), int(down))
     up, down = int(up) // g, int(down) // g
-    if len(x) < (1 << 18) or up == down:
+    if len(x) < (1 << 16) or up == down:
         return signal.resample_poly(x, up, down, window=window)
     half = 10 * max(up, down)                       # resample_poly's half filter length (upsampled domain)
     margin = -(-(-(-half // up) + 2 * down) // down) * down
-    block = max(down, ((1 << 17) // down) * down)
+    block = max(down, ((1 << 15) // down) * down, -(-4 * margin // down) * down)   # mostly payload, not margin
     n_out = -(-len(x) * up // down)
     out = np.empty(n_out, dtype=np.result_type(x.dtype, np.complex64) if np.iscomplexobj(x) else np.float64)
 

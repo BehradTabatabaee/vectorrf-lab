@@ -70,7 +70,7 @@ def blind_phase_search(symbols: np.ndarray, refs: np.ndarray, center: float | No
     best = None
     for gain in radius_scales(z, refs):
         rotated = (z / gain)[None, :] * rotations[:, None]
-        distance = np.min(np.abs(rotated[:, :, None] - refs[None, None, :]) ** 2, axis=2)
+        distance = np.abs(rotated - refs[_nearest(rotated, refs).reshape(rotated.shape)]) ** 2
         costs = distance.mean(axis=1)
         k = int(np.argmin(costs))
         if best is None or costs[k] < best[0]:
@@ -148,6 +148,13 @@ def _inner_ring_coherence(symbols: np.ndarray, cfo_hz: float, symbol_rate: float
 
 def _track_key(cfg: RxConfig) -> str:
     return cfg.model_dump_json(exclude={"ofdm_start_s", "max_symbols"})
+
+
+# Warm starts across a gap (see _digital): refine the predicted carrier phase
+# only across gaps of at least WARM_REFINE_GAP symbols, and weigh the drift it
+# reveals against the loop's averaging time when correcting the frequency.
+WARM_REFINE_GAP = 64
+WARM_AVERAGING_SYMBOLS = 1000
 
 
 def _digital(samples: np.ndarray, cfg: RxConfig, start_sample: int | None = None, track: dict | None = None) -> RxResult:
@@ -315,17 +322,30 @@ def _digital(samples: np.ndarray, cfg: RxConfig, start_sample: int | None = None
     # Symbol-level AGC: the timing and carrier loop gains refer to unit-RMS
     # symbols, so loop dynamics do not change with signal level, filter gain
     # or samples per symbol.
-    mf = (mf / symbol_rms(mf[gd:], sps)).astype(np.complex64)
+    level = symbol_rms(mf[gd:], sps)
+    mf = (mf / level).astype(np.complex64)
     if mod in {"16qam", "64qam", "16apsk", "32apsk"} and len(mf) - gd >= 32 * sps:
         # A finite payload need not use all constellation points equally.
         # Its measured RMS can differ substantially from the reference RMS
         # (a repeating text payload biases 64-QAM by ~16%).  A decision loop
         # fed that scale error drifts even with zero carrier error.
         probe = mf[gd + best::sps][8:520]
-        fitted, _ = fit_constellation(probe, refs)
-        gain = np.vdot(fitted, probe) / max(float(np.vdot(fitted, fitted).real), 1e-30)
+        prior = warm["scale"] / level if warm is not None and warm.get("scale") else 1.0
+        fitted, _ = fit_constellation(probe / prior, refs)
+        gain = prior * np.vdot(fitted, probe / prior) / max(float(np.vdot(fitted, fitted).real), 1e-30)
+        if warm is not None and warm.get("scale"):
+            # A tracked block continues from the scale it inherits and moves it
+            # a quarter of the way to its own fit: a short block's fit can
+            # settle on another match of a dense constellation's rings (0.81 of
+            # the true scale for 16-QAM), and fits accepted whole let the scale
+            # wander block by block until decisions fall on the wrong grid and
+            # the carrier loop loses lock.  A real level change is followed
+            # over a few blocks.
+            ratio = abs(gain) / prior
+            gain = prior * (1.0 + 0.25 * (ratio - 1.0)) if 0.9 < ratio < 1.1 else prior
         if np.isfinite(gain) and 0.25 < abs(gain) < 4:
             mf = (mf / abs(gain)).astype(np.complex64)
+            level = level * abs(gain)
     differential = mod in {"dbpsk","dqpsk","pi4-dqpsk"}
     tracking = cfg.use_costas and cfg.carrier_algorithm != "off" and not differential and not (mod == "oqpsk" and cfg.coarse_cfo)
     costas = cfg.carrier_algorithm == "costas" and base in {"bpsk","qpsk"}
@@ -356,9 +376,13 @@ def _digital(samples: np.ndarray, cfg: RxConfig, start_sample: int | None = None
         # Refine the predicted carrier phase on the block's first symbols.
         m = {"bpsk": 2, "8psk": 8, "16apsk": 12, "32apsk": 16}.get(base, 4)
         moment = complex(np.mean(refs.astype(np.complex128) ** m))
-        if mod != "oqpsk" and abs(moment) > 0.1 * float(np.mean(np.abs(refs.astype(np.complex128)) ** m)) and tracking:
-            # QAM's fourth-power estimate needs more symbols for the same accuracy.
-            count = 256 if mod in {"16qam", "64qam"} else 64
+        # After a gap of a few symbols the loop's own phase is better than any
+        # block estimate: refine only across real gaps.
+        if mod != "oqpsk" and elapsed >= WARM_REFINE_GAP and abs(moment) > 0.1 * float(np.mean(np.abs(refs.astype(np.complex128)) ** m)) and tracking:
+            # QAM's fourth-power estimate needs more symbols for the same accuracy,
+            # and APSK's comes from its inner ring alone (4 of 32-APSK's points):
+            # 64 symbols left fewer than four on it in one block of 25.
+            count = 256 if mod in {"16qam", "64qam", "16apsk", "32apsk"} else 64
             pos = position0 + offset + sps * np.arange(min(count, max(0, int((len(mf) - position0 - offset - 2) // sps))))
             if len(pos) >= 8:
                 probe = np.interp(pos, np.arange(len(mf)), mf.real) + 1j * np.interp(pos, np.arange(len(mf)), mf.imag)
@@ -376,10 +400,13 @@ def _digital(samples: np.ndarray, cfg: RxConfig, start_sample: int | None = None
                 # The prediction error is phase drift accumulated over a known number of
                 # symbols: it measures the residual carrier frequency far more precisely
                 # than one short block can, so later predictions (and the ambiguity
-                # branch they select) stay right across long gaps.
+                # branch they select) stay right across long gaps.  It is weighed
+                # against the loop's own averaging time: over a short gap the
+                # estimate's noise (a fraction of a degree) would otherwise become a
+                # frequency error of hundreds of hertz and throw a dense
+                # constellation's loop out of lock.
                 drift = (measured - phase0 + math.pi) % (2 * math.pi) - math.pi
-                if elapsed > 0:
-                    freq0 = freq0 + 0.5 * drift / elapsed
+                freq0 = freq0 + 0.5 * drift / (elapsed + WARM_AVERAGING_SYMBOLS)
                 phase0 = measured
     if timing == "mueller-muller" and tracking:
         # Decision-directed timing needs carrier-corrected decisions.
@@ -435,7 +462,7 @@ def _digital(samples: np.ndarray, cfg: RxConfig, start_sample: int | None = None
         following = start_sample + (tr.next_position + offset) * per_work
         track.update(cfo=cfo, front_phase=front_phase, next=following, last=following - input_sps,
                      phase=carrier.final_phase if carrier is not None else 0.0,
-                     freq=carrier.final_freq if carrier is not None else 0.0)
+                     freq=carrier.final_freq if carrier is not None else 0.0, scale=float(level))
     telemetry["tracking"] = position0 is not None
     if mod in {"dbpsk","dqpsk","pi4-dqpsk"} and len(syms):
         rotation = 0.0

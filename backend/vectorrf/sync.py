@@ -124,6 +124,33 @@ def _nearest_ref(z: complex, refs: list[complex]) -> complex:
     return min(refs, key=lambda r: abs(z - r))
 
 
+def decision(refs) -> "callable":
+    """The nearest of ``refs`` to one complex symbol, as fast as the
+    constellation allows: rounding for a square grid, one vectorized distance
+    for anything else (a Python ``min`` over 64 points cost 15 µs a symbol)."""
+    from .modem import square_grid
+    points = np.asarray(refs, np.complex128)
+    grid = square_grid(points)
+    if grid is not None:
+        levels, table = grid
+        low, step, top = float(levels[0]), float(levels[1] - levels[0]), len(levels) - 1
+        lookup = [[complex(points[table[i, q]]) for q in range(top + 1)] for i in range(top + 1)]
+
+        def nearest(z):
+            i = min(top, max(0, int(round((z.real - low) / step))))
+            q = min(top, max(0, int(round((z.imag - low) / step))))
+            return lookup[i][q]
+        return nearest
+    if len(points) <= 8:
+        ref_list = points.tolist()
+        return lambda z: min(ref_list, key=lambda r: abs(z - r))
+    ref_list = points.tolist()
+
+    def nearest(z):
+        return ref_list[int(np.argmin(np.abs(points - z)))]
+    return nearest
+
+
 def mueller_muller_carrier(samples: np.ndarray, sps: float, timing_gain: float, carrier: CostasConfig,
                            symbol_rate: float, order: int = 4, refs: np.ndarray | None = None,
                            position0: float = 0.0, phase0: float = 0.0, freq0: float = 0.0) -> JointResult:
@@ -143,7 +170,7 @@ def mueller_muller_carrier(samples: np.ndarray, sps: float, timing_gain: float, 
     """
     x = np.asarray(samples, dtype=np.complex128).tolist()
     n_max = int(len(x) / sps) + 2
-    ref_list = None if refs is None else np.asarray(refs, np.complex128).tolist()
+    nearest = None if refs is None else decision(refs)
     root_half = math.sqrt(0.5)
     alpha, beta = carrier.alpha, carrier.beta
     out, t_err, mus, c_err, phases, freqs = [], [], [], [], [], []
@@ -156,8 +183,8 @@ def mueller_muller_carrier(samples: np.ndarray, sps: float, timing_gain: float, 
         frac = position - i
         z = (x[i] * (1.0 - frac) + x[i + 1] * frac) * cmath.exp(-1j * phase)
         # Decision and carrier phase error from the same carrier-corrected symbol.
-        if ref_list is not None:
-            d = _nearest_ref(z, ref_list)
+        if nearest is not None:
+            d = nearest(z)
             ce = cmath.phase(z * d.conjugate())
         elif order == 2:
             d = 1.0 if z.real >= 0 else -1.0
