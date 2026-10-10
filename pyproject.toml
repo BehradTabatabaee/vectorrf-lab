@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vectorrf-lab"
-version = "2.0.2"
+version = "2.1.0"
 description = "Local vector signal and DSP workbench: composite transmitter, spectrum analyzer, receiver, classifier and radar simulator, with I/Q recordings up to GS/s rates"
 readme = "README.md"
 requires-python = ">=3.10"

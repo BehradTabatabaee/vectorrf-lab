@@ -2,6 +2,39 @@
 
 All notable changes to VectorRF Lab. Versions follow [semantic versioning](https://semver.org/).
 
+## 2.1.0 — 2026-10-10
+
+### Zero span
+
+- Works like an analyzer's: tuned to a centre and filtered by a Gaussian resolution bandwidth before the AM, PM and FM detectors -- auto (the bandwidth the display resolves, 300 / sweep time), manual, or the full band. A tone at the centre reads a flat envelope at its power (a new **Level** readout, in dBm) and 0 Hz. It used to detect the whole sampled band, so at 200 MS/s noise swung the FM trace by hundreds of kHz.
+- Display points show the minimum and maximum of the samples they cover, like an oscilloscope's peak detect. Picking one sample per point aliased anything faster than the display -- the beat of a tone and its copy 5 MHz away, the noise -- into a pattern that changed every sweep. Axes hold still from sweep to sweep.
+- One FFT covers the sweep and the filter's settling time, so the cost follows the sweep rather than the capture, and the filter reads the stream beyond the capture so sweeps start and end settled: 30 updates/s at 200 MS/s (16–27 before).
+- **Every sample** sweeps consecutive intervals of the stream. It used to show the first 2 ms of each 20 ms capture while processing all of it (3–10 updates/s at 200 MS/s).
+
+### Modulation quality
+
+- **Every sample** measures each capture in consecutive segments, as much per update as it processes in a frame: 28–30 updates/s at 200 MS/s (1.4–2.2 before; a tone's whole 4 M-sample capture took 800 ms).
+- A composite is measured one component at a time (**Component**), tuned to it with its hop schedule removed, instead of as the raw sum.
+- A signal without symbols is tuned to its carrier and filtered to its band, drawn with min/max points, and read as its frequency, frequency spread and AM depth.
+- The demodulator runs only for the formats whose EVM it measures.
+
+### Radar
+
+- CFAR multipliers count independent training cells. The range axis is sampled finer than its resolution, its neighbouring cells are correlated, and noise alone produced 6–15 times the requested false-alarm rate: a spurious detection every few frames. None in 40 noise-only captures per detector now.
+- One detection per target: the strongest cell of each mainlobe with a threshold crossing in it. Clusters of cells above threshold merged two targets at one range whose Doppler sidelobes touched, and listed a strong target's Doppler sidelobes as further targets (the default scene listed one at 100 m/s).
+- Weaker peaks on a stronger target's range or Doppler line are recognised as its sidelobes against the waveform's autocorrelation and the Doppler window's sidelobe envelope; a second threshold, guarding the waveform's sidelobes, keeps a strong target from raising its own.
+- The default custom phase code is Barker 7. The former default (0, 180, 0, 0, 180, 0, 180) had −5.6 dB range sidelobes that hid the targets it was meant to show.
+
+### Performance
+
+- Composites sum and tones form their carrier in single precision: 4 M samples of two tones generate in 120 ms (274 ms).
+- Pulse shaping at high oversampling computes only the symbol rows a slice needs; at 40,000 samples per symbol the block alignment of 2.0.2 computed 10 M samples for any slice.
+
+### API changes
+
+- `/api/measurements` and the live measurement: zero span defaults to the auto RBW at `center_hz` (`full_band: true` detects the whole band as before); traces hold at most 600 points, with the maxima of bucketed points in `*_max` and `null` where phase and frequency are undefined; `valid`, `frequency_valid` and `decimation` are gone; new `level_db`, `level_unit`, `noise_bandwidth_hz` and `mean_frequency_hz`. `component` chooses the composite component modulation quality measures.
+- Radar detections are peaks; `margin_db` is the largest excess over the threshold within the detection's mainlobe.
+
 ## 2.0.2 — 2026-10-10
 
 - A real-time capture prefix of a chirp without its own sweep period is the start of the capture again. The shorter prefix that real-time pacing asks for (for the receiver and modulation quality) used to sweep over the prefix instead of the capture, a different signal from the one the spectrum showed.
