@@ -134,11 +134,11 @@ The response holds `freq_hz`, `psd_db` (dBm per RBW for transmitter captures, dB
 
 ### Zero span and modulation quality
 
-`POST /api/measurements` takes `tx` or `source`, `capture_id`, the interval `offset_s` and `duration_s`, optional zero-span tuning `center_hz` and `bandwidth_hz` (mix to DC and band-limit before detection), and `quality`.
+`POST /api/measurements` takes `tx` or `source`, `capture_id`, the interval `offset_s` and `duration_s`, the zero-span `center_hz` and Gaussian RBW `bandwidth_hz` (`null`: the RBW the display resolves, 300 / `duration_s`) or `full_band: true` (no filter), `quality`, and for a composite the `component` that quality measures.
 
-Without `quality` the response holds the zero-span traces (`time_s`, `i`, `q`, `amplitude`, `phase_deg`, `frequency_hz`, `valid`, `frequency_valid`) with the achieved `bandwidth_actual_hz`, `analysis_rate` and `decimation`, and whether the interval was clipped to the capture.
+Without `quality` the response holds the zero-span traces (`time_s`, `i`, `q`, `amplitude`, `phase_deg`, `frequency_hz`; at most 600 points, and when a point covers several analysis samples their minima, with the maxima in `i_max`, `q_max`, …; `null` where phase and frequency are undefined), the achieved `bandwidth_actual_hz` and `noise_bandwidth_hz`, `analysis_rate`, the calibrated `level_db` and `level_unit`, `mean_frequency_hz` relative to the centre, and whether the interval was clipped to the capture.
 
-With `quality` it holds `quality`: for linear formats and OFDM `kind: "evm"` with `metrics` (`evm_rms_percent`, `evm_peak_percent`, `mer_db`, `symbol_count`, …), error-vs-symbol traces (`evm_time_percent`, `magnitude_error_percent`, `phase_error_deg`) and `symbols`; otherwise `kind: "basic"` with the waveform's envelope, phase and instantaneous frequency. The live stream's version of this product tracks the carrier from capture to capture and measures the most recent 2,048 tracked symbols; an HTTP request measures one capture.
+With `quality` it holds `quality`: for linear formats and OFDM `kind: "evm"` with `metrics` (`evm_rms_percent`, `evm_peak_percent`, `mer_db`, `symbol_count`, …), error-vs-symbol traces (`evm_time_percent`, `magnitude_error_percent`, `phase_error_deg`) and `symbols`; otherwise `kind: "basic"`: the signal tuned to its band, with its envelope, phase and instantaneous frequency (min/max per display point) and `metrics` `mean_frequency_hz`, `frequency_std_hz`, `am_percent`, `center_hz` and `bandwidth_hz`. The live stream's version of this product tracks the carrier from capture to capture and measures the most recent 2,048 tracked symbols; an HTTP request measures one capture.
 
 ### Receiver
 

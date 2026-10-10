@@ -108,7 +108,7 @@ Files are memory-mapped, so multi-gigabyte recordings open instantly. A whole-fi
 
 Set **centre and span** like a swept analyzer: spans up to a quarter of the sample rate are digitally down-converted (multistage Kaiser decimation), so a narrow span reaches the RBW the capture length allows. RBW is the window's equivalent noise bandwidth, the default window is Blackman-Harris, and every FFT is zero-padded four times so a tone reads its level within 0.1 dB wherever it falls. Levels are simulated dBm or recording dBFS.
 
-Click to place a marker, drag to select a band and zoom to it, measure its channel power, classify it or receive it; scroll to zoom and double-click for full span. Up to eight markers (normal, delta, noise density), eight draggable channel windows (power, density, 99 % bandwidth), four traces with hold and averaging, memories and a waterfall complete it. **Zero span** shows I/Q, envelope, phase and frequency over time. **Modulation quality** measures decision-directed EVM and MER over the most recent 2,048 symbols while tracking the carrier from capture to capture.
+Click to place a marker, drag to select a band and zoom to it, measure its channel power, classify it or receive it; scroll to zoom and double-click for full span. Up to eight markers (normal, delta, noise density), eight draggable channel windows (power, density, 99 % bandwidth), four traces with hold and averaging, memories and a waterfall complete it. **Zero span** watches one frequency through a Gaussian RBW filter and shows I/Q, envelope, phase and frequency over the sweep, with peak-detect display points and a calibrated level. **Modulation quality** measures decision-directed EVM and MER over the most recent 2,048 symbols while tracking the carrier from capture to capture, or the frequency, spread and AM of a signal without symbols; a composite is measured component by component.
 
 ### Receiver
 
@@ -156,7 +156,7 @@ The [programming guide](docs/PROGRAMMING.md) covers the Python and HTTP APIs, de
 
 ## Performance
 
-Live views target 30 updates per second with acknowledged backpressure. With real-time pacing (the default) the stream follows the wall clock and drops what it cannot process, so it stays live at any rate: with the default signal the spectrum, zero span and live monitor hold 30 updates/s from 1 MS/s to 2 GS/s, and demodulation and modulation quality hold 28–30 up to 100 MS/s. The receiver decimates to 16 samples per symbol first, so its cost follows the number of symbols rather than the sample rate. [Benchmarks](docs/BENCHMARK.md) has the measurements and their conditions.
+Live views target 30 updates per second with acknowledged backpressure. With real-time pacing (the default) the stream follows the wall clock and drops what it cannot process, so it stays live at any rate: with the default signal the spectrum and live monitor hold 30 updates/s from 1 MS/s to 2 GS/s, and demodulation, zero span and modulation quality hold 29–30 up to 100 MS/s, in real time and every-sample pacing alike. The receiver decimates to 16 samples per symbol first, so its cost follows the number of symbols rather than the sample rate. [Benchmarks](docs/BENCHMARK.md) has the measurements and their conditions.
 
 ## Project layout
 

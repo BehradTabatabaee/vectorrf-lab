@@ -42,12 +42,14 @@ Updates per second in a browser (headless Microsoft Edge at 1440 × 900, 1.5× d
 
 | Sample rate | Demodulation | Live monitor | Spectrum | Zero span | Modulation quality |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 MS/s | 29 | 30 | 30 | 30 | 29 |
-| 10 MS/s | 29 | 30 | 30 | 30 | 28 |
-| 100 MS/s | 30 | 30 | 30 | 30 | 28 |
-| 2 GS/s | 5 | 30 | 30 | 30 | 11 |
+| 1 MS/s | 29 | 30 | 30 | 30 | 30 |
+| 10 MS/s | 29 | 30 | 30 | 30 | 30 |
+| 100 MS/s | 30 | 30 | 30 | 30 | 30 |
+| 2 GS/s | 5 | 30 | 30 | 8 | 15 |
 
-Payloads: spectrum 1 kB (the frequency axis is sent once), zero span 52–57 kB, modulation quality 65 kB, live monitor 80 kB, demodulation 130–260 kB. The main thread stays below 25 % busy.
+Payloads: spectrum 1 kB (the frequency axis is sent once), zero span 55–58 kB, modulation quality 64–67 kB, live monitor 80 kB, demodulation 130–260 kB. The main thread stays below 25 % busy.
+
+Zero span sweeps 2 ms: at 2 GS/s that is 4 M samples per sweep, generated and transformed whole (one 4 M-point FFT, about 50 ms); a shorter sweep is proportionally faster. With every-sample pacing zero span and modulation quality run at the same rates while sweeping the stream end to end (29–30 updates/s up to 100 MS/s; 8 and 16 at 2 GS/s). A tone and its copy 5 MHz away at 200 MS/s, with 20 ms captures (4 M samples): zero span 30 updates/s in both pacings, modulation quality 30 in real time and 28 every sample.
 
 At 2 GS/s a 50 kBd signal has 40,000 samples per symbol: a real-time capture of 524,288 samples holds 13 symbols, fewer than the matched filters' transient. Views that demodulate symbols therefore ask for captures of 2.6 M samples (the transient plus 32 symbols); generating and decimating them sets their update rate, and real-time pacing drops everything in between. Modulation quality keeps tracking across those captures and measures the most recent 2,048 symbols. A higher symbol rate brings every view back to 30 updates/s.
 
