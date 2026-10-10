@@ -207,3 +207,16 @@ def test_pulse_shaping_of_a_slice_does_not_depend_on_its_length(sps):
     later = start + 333 * sps + 5
     np.testing.assert_array_equal(shape_pulses(symbols, 0, taps, sps, later, 200), whole[later - start:later - start + 200])
 
+
+def test_a_capture_prefix_keeps_the_sweep_the_capture_defines():
+    """A chirp without a period of its own sweeps over the capture.  The
+    shorter prefix a real-time receiver asks for used to sweep over the prefix
+    instead, a different signal from the capture it claimed to be."""
+    from vectorrf.source import source_record
+    chirp = {"waveform": "chirp", "chirp_start_hz": -100e3, "chirp_stop_hz": 100e3}
+    for tx in (TxConfig(**chirp, sample_rate=1e6, duration=0.01, snr_db=None),
+               TxConfig(waveform="composite", sample_rate=1e6, duration=0.01, snr_db=None,
+                        components=[chirp, {"waveform": "tone", "center_hz": 200e3, "power_dbm": -6}])):
+        full = source_record(tx, 3)
+        for limit in (777, 5000):
+            np.testing.assert_allclose(source_record(tx, 3, limit=limit).samples, full.samples[:limit], rtol=0, atol=1e-6)

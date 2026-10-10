@@ -14,7 +14,7 @@ import os
 from threading import RLock
 
 from .models import TxConfig
-from .signal import GeneratedSignal, capture_samples, generate
+from .signal import GeneratedSignal, capture_prefix, capture_samples, generate
 
 _lock = RLock()
 _cache: "OrderedDict[tuple[str, int], GeneratedSignal]" = OrderedDict()
@@ -45,7 +45,7 @@ def _record(config_json: str, frame: int, limit: int | None = None) -> Generated
     start = frame * capture_samples(cfg)
     if limit is not None and limit < capture_samples(cfg):
         # Only the first ``limit`` samples of the capture: the same samples, the rest never made.
-        g = generate(cfg.model_copy(update={"duration": limit / cfg.sample_rate}), frame=frame, start_sample=start)
+        g = generate(capture_prefix(cfg, limit), frame=frame, start_sample=start)
     else:
         g = generate(cfg, frame=frame, start_sample=start)
     g.samples.flags.writeable = False

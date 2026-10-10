@@ -680,6 +680,17 @@ def chirp_period_samples(cfg: TxConfig) -> int:
     return max(1, int(round(float(cfg.chirp_period_s or cfg.duration) * cfg.sample_rate)))
 
 
+def capture_prefix(cfg: TxConfig, n: int) -> TxConfig:
+    """A design whose captures are the first ``n`` samples of ``cfg``'s captures.
+
+    Only the capture length changes: a chirp without a period of its own (in
+    the design or a component) keeps sweeping over ``cfg``'s capture.
+    """
+    def pin(c: TxConfig) -> TxConfig:
+        return c if c.chirp_period_s is not None else c.model_copy(update={"chirp_period_s": cfg.duration})
+    return pin(cfg).model_copy(update={"duration": n / cfg.sample_rate, "components": [pin(c) for c in cfg.components]})
+
+
 # Fields that change the clean waveform's shape (not its scale, offset, gating or impairments).
 _SCALE_FIELDS = {"power_dbm", "amplitude", "normalize_output", "snr_db", "center_hz", "phase_offset_deg", "iq_gain_db",
                  "iq_phase_deg", "dc_i", "dc_q", "burst_enabled", "burst_period_s", "burst_duty", "agility", "label",
