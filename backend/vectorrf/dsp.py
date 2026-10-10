@@ -39,26 +39,28 @@ _PHASOR_BLOCK = 1024
 
 
 def phasor(freq_hz: float, fs: float, n: int, start_sample: int = 0, phase_rad: float = 0.0,
-           start_time: Fraction | None = None) -> np.ndarray:
+           start_time: Fraction | None = None, dtype=np.complex128) -> np.ndarray:
     """Complex exponential ``exp(j(2π f (t0 + k/fs) + phase))`` with exact start phase.
 
     Long records are built as an outer product: sample ``k = b·B + i`` is
     ``exp(j2π(start + frac(b·B·step))) · exp(j2π·frac(i·step))``.  Each factor
     carries the same float64 phase rounding as evaluating ``k·step`` directly,
     but only ``n/B + B`` complex exponentials are computed instead of ``n``.
+    With ``dtype=np.complex64`` the product is formed in single precision
+    (phase error about 10⁻⁷ rad, at half the memory traffic).
     """
     n = int(n)
     if not freq_hz:
-        return np.full(n, np.exp(1j * phase_rad), dtype=np.complex128)
+        return np.full(n, np.exp(1j * phase_rad), dtype=dtype)
     start, step = _cycle_terms(freq_hz, fs, start_sample, start_time)
     if n <= 4 * _PHASOR_BLOCK:
         k = np.arange(n, dtype=np.float64)
-        return np.exp(1j * (2.0 * np.pi * np.mod(start + np.mod(k * step, 1.0), 1.0) + phase_rad))
+        return np.exp(1j * (2.0 * np.pi * np.mod(start + np.mod(k * step, 1.0), 1.0) + phase_rad)).astype(dtype, copy=False)
     blocks = -(-n // _PHASOR_BLOCK)
     inner = np.exp(2j * np.pi * np.mod(np.arange(_PHASOR_BLOCK, dtype=np.float64) * step, 1.0))
     heads = np.arange(0, blocks * _PHASOR_BLOCK, _PHASOR_BLOCK, dtype=np.float64)
     outer = np.exp(1j * (2.0 * np.pi * np.mod(start + np.mod(heads * step, 1.0), 1.0) + phase_rad))
-    return (outer[:, None] * inner[None, :]).reshape(-1)[:n]
+    return (outer.astype(dtype, copy=False)[:, None] * inner.astype(dtype, copy=False)[None, :]).reshape(-1)[:n]
 
 
 def rms(x: np.ndarray) -> float:
@@ -154,7 +156,7 @@ def interpolate(taps: np.ndarray, symbols: np.ndarray, up: int) -> np.ndarray:
     return out
 
 
-_SHAPE_BLOCK = 256   # symbol rows per pulse-shaping product (see shape_pulses)
+_SHAPE_BLOCK = 1 << 16   # samples per pulse-shaping product, at most 256 symbol rows (see shape_pulses)
 
 
 def shape_pulses(symbols: np.ndarray, first: int, taps: np.ndarray, sps: int, start: int, n: int) -> np.ndarray:
@@ -171,13 +173,14 @@ def shape_pulses(symbols: np.ndarray, first: int, taps: np.ndarray, sps: int, st
     h = np.zeros(k * sps, dtype=np.float32)
     h[:len(taps)] = taps
     H = h.reshape(k, sps)
-    # Symbol rows covering the slice, widened to whole blocks of _SHAPE_BLOCK
-    # rows at absolute multiples: BLAS rounds a row differently depending on the
-    # shape of the product and the row's place in it, so every row is always
-    # computed in the same block, and any slice (a capture or its prefix) holds
-    # exactly the samples of the whole stream.
-    row0 = (start // sps) // _SHAPE_BLOCK * _SHAPE_BLOCK
-    row1 = -(-((start + n - 1) // sps + 1) // _SHAPE_BLOCK) * _SHAPE_BLOCK   # exclusive
+    # Symbol rows covering the slice, widened to whole blocks of ``block`` rows
+    # (a function of ``sps`` alone) at absolute multiples: BLAS rounds a row
+    # differently depending on the shape of the product and the row's place in
+    # it, so every row is always computed in the same block, and any slice (a
+    # capture or its prefix) holds exactly the samples of the whole stream.
+    block = max(1, min(256, _SHAPE_BLOCK // sps))
+    row0 = (start // sps) // block * block
+    row1 = -(-((start + n - 1) // sps + 1) // block) * block   # exclusive
     lo = row0 - (k - 1)                                   # earliest symbol that reaches row0
     ext = np.zeros(row1 - lo, dtype=np.complex64)
     a, b = max(lo, first), min(row1, first + len(symbols))
@@ -188,7 +191,7 @@ def shape_pulses(symbols: np.ndarray, first: int, taps: np.ndarray, sps: int, st
     # one batched real matrix product (BLAS needs contiguous operands).
     windows = np.lib.stride_tricks.sliding_window_view(ext, k)
     rows = len(windows)
-    stacked = np.concatenate([windows.real, windows.imag]).astype(np.float32).reshape(-1, _SHAPE_BLOCK, k)
+    stacked = np.concatenate([windows.real, windows.imag]).astype(np.float32).reshape(-1, block, k)
     product = (stacked @ np.ascontiguousarray(H[::-1])).reshape(2 * rows, sps)
     out = np.empty((rows, sps), dtype=np.complex64)
     out.real = product[:rows]

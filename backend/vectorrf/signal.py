@@ -713,7 +713,7 @@ def _clean(cfg: TxConfig, a: int, n: int, frame: int = 0) -> GeneratedSignal:
         return GeneratedSignal(program_samples(cfg.program, fs, n, a / fs, frame, cfg.seed, start_sample=a).astype(np.complex128), fs,
                                {"waveform": "custom", "program_mode": cfg.program.mode})
     if w == WaveformKind.TONE:
-        return GeneratedSignal(np.ones(n, dtype=np.complex128), fs, {"waveform": "tone"})
+        return GeneratedSignal(np.ones(n, dtype=np.complex64), fs, {"waveform": "tone"})
     if w == WaveformKind.MULTITONE:
         y = np.zeros(n, dtype=np.complex128)
         for f in cfg.tones_hz:
@@ -853,10 +853,14 @@ def _composite_power(config_json: str) -> tuple[float, float]:
 
 
 def composite_power(cfg: TxConfig) -> tuple[float, float]:
-    """(``P_ref`` dBm, on-power relative to ``P_ref``) of a composite design."""
-    return _composite_power(cfg.model_dump_json(exclude={"label", "snr_db", "iq_gain_db", "iq_phase_deg", "dc_i", "dc_q",
-                                                         "burst_enabled", "burst_period_s", "burst_duty", "agility",
-                                                         "phase_offset_deg", "center_hz", "amplitude", "normalize_output"}))
+    """(``P_ref`` dBm, on-power relative to ``P_ref``) of a composite design.
+
+    The capture length is not part of the design's power: with the chirp
+    periods it defines pinned, every capture length shares one cache entry.
+    """
+    return _composite_power(capture_prefix(cfg, 32).model_dump_json(exclude={
+        "label", "snr_db", "iq_gain_db", "iq_phase_deg", "dc_i", "dc_q", "burst_enabled", "burst_period_s",
+        "burst_duty", "agility", "phase_offset_deg", "center_hz", "amplitude", "normalize_output"}))
 
 
 def _composite(cfg: TxConfig, frame: int, start_sample: int) -> tuple[GeneratedSignal, float, float]:
@@ -871,12 +875,13 @@ def _composite(cfg: TxConfig, frame: int, start_sample: int) -> tuple[GeneratedS
     from .bands import nominal_band
     enabled = [(i, c) for i, c in enumerate(cfg.components) if c.enabled]
     reference_dbm, power_sum = composite_power(cfg)
-    y = np.zeros(capture_samples(cfg), dtype=np.complex128)
+    # complex64 like every capture: its 24-bit mantissa sits ~144 dB below the sum.
+    y = np.zeros(capture_samples(cfg), dtype=np.complex64)
     parts = []
     for i, c in enabled:
         g = generate(_component_config(cfg, i, c), frame=frame, start_sample=start_sample)
         amplitude = 10.0 ** ((c.power_dbm - reference_dbm) / 20.0)
-        y += g.samples.astype(np.complex128) * amplitude
+        y += g.samples * np.float32(amplitude)
         band = nominal_band(c)
         parts.append({"index": i, "label": c.label or f"Component {i + 1}", "waveform": c.waveform.value,
                       "power_dbm": c.power_dbm, "center_hz": c.center_hz + cfg.center_hz,
@@ -911,7 +916,7 @@ def generate(cfg: TxConfig, start_s: float = 0, frame: int = 0, start_sample: in
     if abs(cfg.phase_offset_deg) > 1e-12:
         y = y * np.complex64(np.exp(1j*np.deg2rad(cfg.phase_offset_deg)))
     if abs(cfg.center_hz) > 1e-12:
-        y = y * phasor(cfg.center_hz, fs, len(y), start_sample).astype(np.complex64)
+        y = y * phasor(cfg.center_hz, fs, len(y), start_sample, dtype=np.complex64)
     # The calibration reference is the clean signal's on-power, a property of
     # the design: added AWGN, DC and I/Q imbalance read on top of the
     # configured power, and burst, hop or pulse off-time reads the configured
