@@ -307,7 +307,7 @@ EVM_MODULATIONS = LINEAR_MODULATIONS | {"ofdm"}   # the formats whose demodulato
 
 def _evm_quality(r, rx, store, digits=None):
     """EVM view of a demodulated capture, accumulated over captures in ``store``."""
-    from .modem import evm_rms, reference_constellation
+    from .modem import evm_rms, fit_constellation, reference_constellation
     from .rx import symbol_errors
     base = {"dbpsk": "bpsk", "dqpsk": "qpsk", "pi4-dqpsk": "qpsk", "oqpsk": "qpsk"}.get(rx.modulation, rx.modulation)
     symbols = np.asarray(r.symbols if r.symbols is not None else [], dtype=np.complex64)
@@ -316,7 +316,12 @@ def _evm_quality(r, rx, store, digits=None):
         if r.telemetry.get("reacquired") or not r.telemetry.get("tracking"):
             store["symbols"] = np.zeros(0, np.complex64)   # a fresh lock starts a fresh record
             store["captures"] = 0
-        record = np.concatenate([store.get("symbols", np.zeros(0, np.complex64)), symbols[settle:]])[-QUALITY_SYMBOLS:]
+        # Each update's symbols join the record fitted to the constellation (gain
+        # and phase): a short block's receiver scale can differ from the last
+        # one's, and mixed scales would read as EVM that no block has.
+        refs = reference_constellation(base, rx.apsk_ratio2, rx.apsk_ratio3)
+        fresh = fit_constellation(symbols[settle:], refs)[0].astype(np.complex64) if len(symbols) > settle else symbols[:0]
+        record = np.concatenate([store.get("symbols", np.zeros(0, np.complex64)), fresh])[-QUALITY_SYMBOLS:]
         store["symbols"] = record
         store["captures"] = store.get("captures", 0) + 1
         metrics = dict(r.metrics)
@@ -585,6 +590,32 @@ async def _ordered_product(previous, work, samples, kind, product, revision, *ar
     return await asyncio.to_thread(_timed, work, samples, _message, kind, product, revision, *args)
 
 
+# Modulation quality measures a fixed amount per update, as zero span measures
+# its sweep: QUALITY_UPDATE_SYMBOLS new symbols (twice that for OQPSK, whose
+# timing loop on staggered rails needs the longer block to hold lock across
+# real time's gaps), or what fits in QUALITY_UPDATE_SAMPLES at high
+# oversampling, never fewer than the matched filters' transient plus 32
+# symbols.  An update then costs about 10 ms whatever the rate, and the
+# 2,048-symbol record fills over four updates.  It used to take as much as
+# fitted in 75 % of a frame, which left no headroom on a slower machine.
+QUALITY_UPDATE_SYMBOLS = 512
+QUALITY_UPDATE_SAMPLES = 1 << 18
+
+
+def _quality_samples(tx, file, m) -> int:
+    """Samples one modulation-quality update measures."""
+    if file is not None:
+        return QUALITY_UPDATE_SAMPLES // 2
+    design = _quality_design(tx, m.component)[0]
+    if design.waveform.value not in LINEAR_MODULATIONS:
+        return QUALITY_UPDATE_SAMPLES // 2      # a waveform view: one filtered stretch
+    sps = tx.sample_rate / design.symbol_rate
+    transient = 2 * design.filter_span_symbols
+    wanted = QUALITY_UPDATE_SYMBOLS * (2 if design.waveform.value == 'oqpsk' else 1)
+    symbols = int(min(wanted, max(32, QUALITY_UPDATE_SAMPLES / sps - transient)))
+    return int(math.ceil((transient + symbols) * sps))
+
+
 def _symbol_floor(tx) -> int:
     """Samples a receiver needs per capture of ``tx``: the matched filters'
     transient plus 32 symbols (0 when the design has no symbol clock)."""
@@ -839,14 +870,17 @@ async def live_session(ws: WebSocket) -> None:
                 # Real time drops what the chain cannot process at the display rate.
                 # A zero-span sweep costs what its interval costs: it reads that
                 # interval whole and generates no further than its end.
-                limit = work.limit(capture_window, fps) if realtime and chain_active and not zero else None
+                limit = work.limit(capture_window, fps) if realtime and chain_active and not measuring else None
+                if realtime and measuring and not zero:
+                    size = _quality_samples(tx, file, measure)
+                    limit = size if size < capture_window else None
                 if realtime and zero and rate:
                     from .measurements import settling_samples
                     need = math.ceil((measure.offset_s + measure.duration_s) * rate) + settling_samples(
                         rate, measure.duration_s, measure.bandwidth_hz, measure.full_band)
                     need = min(capture_window, max(MIN_WORK_SAMPLES, need))
                     limit = need if need < capture_window else None
-                if limit is not None and file is None and (rx is not None or (measure is not None and measure.quality)):
+                if limit is not None and file is None and rx is not None:
                     # A receiver needs a few symbols beyond its filters' transient in
                     # every capture it keeps, however expensive the samples are.
                     minimum = _symbol_floor(tx)
@@ -918,7 +952,7 @@ async def live_session(ws: WebSocket) -> None:
                     if zero:
                         size = max(2, int(round(measure.duration_s * record.sample_rate)))
                     else:
-                        size = max(work.limit(total, fps) or total, MIN_WORK_SAMPLES, _symbol_floor(tx) if file is None else 0)
+                        size = _quality_samples(tx, file, measure)
                     size = min(size, total)
                     # The last segment of a record ends at its end (overlapping the one before).
                     segment = (min(sweep, total - size), min(sweep, total - size) + size)

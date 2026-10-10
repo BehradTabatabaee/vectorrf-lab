@@ -94,3 +94,70 @@ def test_every_sample_quality_sweeps_each_record_in_segments():
     assert first["capture_duration_s"] == second["capture_duration_s"] == pytest.approx(0.008)
     for q in (first["quality"], second["quality"]):
         assert q["metrics"]["mean_frequency_hz"] == pytest.approx(0, abs=1) and q["metrics"]["am_percent"] < 0.5
+
+
+# --------------------------------------------- modulation quality per update
+
+def _gapped_updates(tx, updates, seed=0):
+    """Quality updates as real time makes them: prefixes of captures a few apart."""
+    from vectorrf.engine import _quality_samples
+    m = MeasurementSpec(quality=True)
+    size, memory = _quality_samples(tx, None, m), {}
+    rng = np.random.default_rng(seed)
+    capture, out = 3, []
+    for _ in range(updates):
+        capture += int(rng.integers(1, 4))
+        out.append(measurement_product(source_record(tx, capture, limit=size), tx, False, capture, m, memory)["quality"])
+    return size, out
+
+
+def test_quality_updates_have_a_fixed_size():
+    """Like a zero-span sweep: 512 new symbols plus the matched filters'
+    transient, or 262,144 samples at high oversampling, not what fits in a
+    frame (which left no headroom)."""
+    from vectorrf.engine import QUALITY_UPDATE_SAMPLES, _quality_samples
+    qpsk = TxConfig(waveform="qpsk", sample_rate=1e6, symbol_rate=50e3)
+    assert _quality_samples(qpsk, None, MeasurementSpec(quality=True)) == (2 * qpsk.filter_span_symbols + 512) * 20
+    fast = TxConfig(waveform="qpsk", sample_rate=100e6, symbol_rate=50e3)
+    assert _quality_samples(fast, None, MeasurementSpec(quality=True)) <= QUALITY_UPDATE_SAMPLES
+    oqpsk = TxConfig(waveform="oqpsk", sample_rate=1e6, symbol_rate=50e3)
+    assert _quality_samples(oqpsk, None, MeasurementSpec(quality=True)) == (2 * qpsk.filter_span_symbols + 1024) * 20
+
+
+@pytest.mark.parametrize("waveform, rate, symbol_rate", [("64qam", 50e6, 1e6), ("16qam", 200e6, 5e6), ("32apsk", 10e6, 200e3)])
+def test_dense_constellations_stay_locked_across_real_time_gaps(waveform, rate, symbol_rate):
+    """Short tracked blocks a few captures apart: each block continues the
+    previous one's scale (a block's own fit could settle on another match of
+    the rings, 0.81 of the scale) and refines the carrier phase only across
+    real gaps (a fraction of a degree over one symbol became hundreds of
+    hertz); APSK probes 256 symbols, enough of its inner ring.  64-QAM used
+    to lose lock within a few blocks and re-acquire, at 50-200 ms an update."""
+    tx = TxConfig(waveform=waveform, sample_rate=rate, symbol_rate=symbol_rate, duration=min(524288, int(rate / 30)) / rate,
+                  snr_db=40, data_source="pn", pn_order=15, pn_bits=32767)
+    _, updates = _gapped_updates(tx, 30)
+    blocks = [q["metrics"]["evm_all_percent"] for q in updates[3:]]
+    assert max(blocks) < 1.6 and not any(q["telemetry"].get("reacquired") for q in updates[1:])
+    # The record joins the blocks fitted to the constellation: it reads what each block reads.
+    assert updates[-1]["metrics"]["symbol_count"] == 2048
+    assert updates[-1]["metrics"]["evm_rms_percent"] < 1.3
+
+
+def test_fast_slicers_decide_like_the_exhaustive_search():
+    from vectorrf.modem import _nearest, reference_constellation
+    from vectorrf.sync import _nearest_ref, decision
+    rng = np.random.default_rng(3)
+    for mod in ("bpsk", "qpsk", "8psk", "16qam", "64qam", "16apsk", "32apsk"):
+        refs = reference_constellation(mod)
+        z = (rng.standard_normal(5000) + 1j * rng.standard_normal(5000)) * 0.8
+        np.testing.assert_array_equal(_nearest(z, refs), np.argmin(np.abs(z[:, None] - refs[None, :]), axis=1))
+        nearest, points = decision(refs), refs.astype(np.complex128).tolist()
+        assert all(nearest(complex(v)) == _nearest_ref(complex(v), points) for v in z[:1000]), mod
+
+
+@pytest.mark.parametrize("n, up, down", [(70_000, 16, 1250), (262_000, 1, 125), (2_080_000, 1, 2500)])
+def test_parallel_resampling_is_the_single_call(n, up, down):
+    from scipy import signal as sig
+    from vectorrf.dsp import resample
+    rng = np.random.default_rng(1)
+    x = (rng.standard_normal(n) + 1j * rng.standard_normal(n)).astype(np.complex64)
+    np.testing.assert_array_equal(resample(x, up, down), sig.resample_poly(x, up, down, window=("kaiser", 10.0)))
