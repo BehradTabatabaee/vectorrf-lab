@@ -188,3 +188,22 @@ def test_sawtooth_chirp_is_phase_continuous_through_the_flyback():
     assert step[999] == pytest.approx(99.9e3, abs=1.0) and step[1000] == pytest.approx(-99.9e3, abs=1.0)
     y = generate(cfg.model_copy(update={"duration": 0.004}), start_sample=3000).samples
     np.testing.assert_array_equal(y, x[3000:7000].astype(np.complex64))
+
+
+@pytest.mark.parametrize("sps", [4, 10, 50, 80])
+def test_pulse_shaping_of_a_slice_does_not_depend_on_its_length(sps):
+    """BLAS rounds the rows of a matrix product differently for different
+    shapes; the shaper computes every symbol row in the same block, so a slice
+    holds exactly the samples of any longer slice (it differed by a float32
+    ulp in a third of the samples at 50 samples per symbol)."""
+    from vectorrf.dsp import rrc_taps, shape_pulses
+    rng = np.random.default_rng(sps)
+    symbols = (rng.choice([-3, -1, 1, 3], 4000) + 1j * rng.choice([-3, -1, 1, 3], 4000)).astype(np.complex64)
+    taps = rrc_taps(sps, 0.35, 16).astype(np.float32)
+    start = 1000 * sps + 7
+    whole = shape_pulses(symbols, 0, taps, sps, start, 1500 * sps)
+    for n in (1, 777, 50 * sps + 3, 1500 * sps - 1):
+        np.testing.assert_array_equal(shape_pulses(symbols, 0, taps, sps, start, n), whole[:n])
+    later = start + 333 * sps + 5
+    np.testing.assert_array_equal(shape_pulses(symbols, 0, taps, sps, later, 200), whole[later - start:later - start + 200])
+

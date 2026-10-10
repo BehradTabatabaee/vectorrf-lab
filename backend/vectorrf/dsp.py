@@ -154,6 +154,9 @@ def interpolate(taps: np.ndarray, symbols: np.ndarray, up: int) -> np.ndarray:
     return out
 
 
+_SHAPE_BLOCK = 256   # symbol rows per pulse-shaping product (see shape_pulses)
+
+
 def shape_pulses(symbols: np.ndarray, first: int, taps: np.ndarray, sps: int, start: int, n: int) -> np.ndarray:
     """Samples ``start … start + n − 1`` of y[i] = Σ_m s_m · h[i − m·sps].
 
@@ -168,19 +171,25 @@ def shape_pulses(symbols: np.ndarray, first: int, taps: np.ndarray, sps: int, st
     h = np.zeros(k * sps, dtype=np.float32)
     h[:len(taps)] = taps
     H = h.reshape(k, sps)
-    row0, row1 = start // sps, (start + n - 1) // sps     # symbol rows covering the slice
+    # Symbol rows covering the slice, widened to whole blocks of _SHAPE_BLOCK
+    # rows at absolute multiples: BLAS rounds a row differently depending on the
+    # shape of the product and the row's place in it, so every row is always
+    # computed in the same block, and any slice (a capture or its prefix) holds
+    # exactly the samples of the whole stream.
+    row0 = (start // sps) // _SHAPE_BLOCK * _SHAPE_BLOCK
+    row1 = -(-((start + n - 1) // sps + 1) // _SHAPE_BLOCK) * _SHAPE_BLOCK   # exclusive
     lo = row0 - (k - 1)                                   # earliest symbol that reaches row0
-    ext = np.zeros(row1 - lo + 1, dtype=np.complex64)
-    a, b = max(lo, first), min(row1 + 1, first + len(symbols))
+    ext = np.zeros(row1 - lo, dtype=np.complex64)
+    a, b = max(lo, first), min(row1, first + len(symbols))
     if b > a:
         ext[a - lo:b - lo] = symbols[a - first:b - first]
     # Row j holds s_{row0+j−(k−1)} … s_{row0+j}; against the tap rows in reverse
     # order that is Σ_k s_{row0+j−k}·H[k].  Real and imaginary parts go through
-    # one real matrix product (BLAS needs contiguous operands).
+    # one batched real matrix product (BLAS needs contiguous operands).
     windows = np.lib.stride_tricks.sliding_window_view(ext, k)
     rows = len(windows)
-    stacked = np.concatenate([windows.real, windows.imag]).astype(np.float32)
-    product = stacked @ np.ascontiguousarray(H[::-1])
+    stacked = np.concatenate([windows.real, windows.imag]).astype(np.float32).reshape(-1, _SHAPE_BLOCK, k)
+    product = (stacked @ np.ascontiguousarray(H[::-1])).reshape(2 * rows, sps)
     out = np.empty((rows, sps), dtype=np.complex64)
     out.real = product[:rows]
     out.imag = product[rows:]
