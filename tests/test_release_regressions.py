@@ -30,7 +30,7 @@ def test_release_metadata_and_help_page_are_published():
     from vectorrf.models import MAX_SAMPLE_RATE, MAX_CAPTURE_SAMPLES
     health = client.get('/api/health')
     assert health.status_code == 200
-    assert health.json()['version'] == __version__ == '2.0.0'
+    assert health.json()['version'] == __version__ == '2.0.1'
     assert health.json()['max_spectrum_span'] == MAX_SAMPLE_RATE
     assert health.json()['max_capture_samples'] == MAX_CAPTURE_SAMPLES
     help_page = client.get('/help')

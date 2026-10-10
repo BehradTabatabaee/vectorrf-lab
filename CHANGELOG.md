@@ -2,6 +2,12 @@
 
 All notable changes to VectorRF Lab. Versions follow [semantic versioning](https://semver.org/).
 
+## 2.0.1 — 2026-10-10
+
+- Text being typed into a field is kept when the editor re-renders to answer an earlier edit. When the design plan of a value committed a moment before arrived while the next value was being typed, the editor was rebuilt and the half-typed entry silently replaced, so that edit never happened.
+- The live engine no longer logs a browser that disconnects while a product is being sent as a failed product, and a page that closes before its session starts no longer raises an error on the server.
+- CI stability: the streaming test follows the client revision each product answers (the server keeps up to two frames in flight), and the browser test waits for conditions instead of fixed delays, so slower runners no longer fail intermittently.
+
 ## 2.0.0 — 2026-10-09
 
 A major release: I/Q recordings and operation up to 5 GS/s, composite and frequency-agile transmitters, an instrument-style spectrum analyzer, a receiver that acquires and tracks across the whole carrier-offset range, a classifier that explains itself and a radar studio with an interactive scene and a family of CFAR detectors — on a rewritten, module-based interface, after a full mathematical audit of the DSP. Breaking changes are listed at the end.
