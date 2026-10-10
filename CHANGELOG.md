@@ -2,6 +2,12 @@
 
 All notable changes to VectorRF Lab. Versions follow [semantic versioning](https://semver.org/).
 
+## 2.0.2 — 2026-10-10
+
+- A real-time capture prefix of a chirp without its own sweep period is the start of the capture again. The shorter prefix that real-time pacing asks for (for the receiver and modulation quality) used to sweep over the prefix instead of the capture, a different signal from the one the spectrum showed.
+- Pulse shaping gives a slice of the stream exactly the samples of any longer slice. BLAS rounds a row of a matrix product differently depending on the shape of the product, so a prefix could differ from the start of its capture by a float32 ulp in a third of the samples; rows are now computed in blocks aligned to the absolute symbol index.
+- CI reports failed tests as annotations on the run.
+
 ## 2.0.1 — 2026-10-10
 
 - Text being typed into a field is kept when the editor re-renders to answer an earlier edit. When the design plan of a value committed a moment before arrived while the next value was being typed, the editor was rebuilt and the half-typed entry silently replaced, so that edit never happened.
